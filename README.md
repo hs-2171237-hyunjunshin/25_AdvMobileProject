@@ -1,97 +1,58 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# StudyMate - React Native 스터디 앱
 
-# Getting Started
+`StudyMate`는 뽀모도로 기법과 스톱워치 기능을 활용하여 사용자의 학습 효율을 극대화하고, 학습 기록을 체계적으로 관리할 수 있도록 돕는 모바일 스터디 애플리케이션입니다.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+이 프로젝트는 웹 기반 코드(`webCode`)를 React Native로 성공적으로 마이그레이션한 결과물로, Firebase를 백엔드로 사용하여 인증, 데이터베이스, 랭킹 시스템 등의 기능을 구현했습니다.
 
-## Step 1: Start Metro
+## ✨ 주요 기능
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+- **듀얼 타이머 시스템**:
+    - **뽀모도로 타이머**: 25분 집중, 5분 휴식 사이클을 기반으로 동작하며, 4회 반복 후 긴 휴식을 제공하여 집중력 유지를 돕습니다.
+    - **스톱워치**: 자유롭게 학습 시간을 측정하고, 원할 때 정지하여 기록을 저장할 수 있습니다.
+- **Firebase 연동 실시간 인증**:
+    - 이메일과 비밀번호를 이용한 간편한 로그인 및 회원가입 기능을 제공합니다.
+    - 인증 상태를 실시간으로 감지하여 안전한 앱 사용 환경을 보장합니다.
+- **학습 기록 자동 저장 및 분석**:
+    - 타이머를 통해 완료된 모든 학습 세션은 Firebase Firestore에 자동으로 기록됩니다.
+    - **스터디 캘린더**: 월별 달력에서 학습 기록이 있는 날을 한눈에 확인하며 성취감을 느낄 수 있습니다.
+- **경쟁과 동기부여**:
+    - **랭킹 시스템**: 모든 사용자의 누적 학습 시간을 기준으로 순위를 제공하여 선의의 경쟁을 유도합니다.
+- **사용자 맞춤형 경험**:
+    - **프로필**: 자신의 계정 정보를 확인하고 안전하게 로그아웃할 수 있습니다.
+    - **스터디 그룹 및 알림 (기본 구조 구현)**: 향후 커뮤니티 기능으로 확장될 수 있는 기반을 마련했습니다.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+## 🛠️ 기술 스택 (Tech Stack)
 
-```sh
-# Using npm
-npm start
+### 프론트엔드 (Frontend)
 
-# OR using Yarn
-yarn start
-```
+- **`React Native`**: 크로스플랫폼 모바일 앱 개발을 위한 메인 프레임워크
+- **`TypeScript`**: 코드의 안정성과 가독성을 높이기 위한 정적 타입 언어
+- **`React Navigation`**: 화면 간의 이동 및 하단 탭 네비게이션 구현
+- **`@react-native-firebase/app`**: Firebase 서비스를 React Native 환경에서 사용하기 위한 핵심 브릿지
+- **`react-native-svg`**: 원형 프로그레스 바 등 커스텀 UI 구현
+- **`react-native-calendars`**: 학습 기록 시각화를 위한 캘린더 UI 구현
 
-## Step 2: Build and run your app
+### 백엔드 (Backend)
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+- **`Firebase`**: 서버리스 백엔드 플랫폼
+    - **Authentication**: 사용자 인증(이메일/비밀번호) 처리
+    - **Cloud Firestore**: 학습 기록, 랭킹 데이터 등 NoSQL 데이터베이스 관리
 
-### Android
+## 🚀 시작하기 (Getting Started)
 
-```sh
-# Using npm
-npm run android
+### 사전 요구사항
 
-# OR using Yarn
-yarn android
-```
+- Node.js (LTS 버전 권장)
+- Watchman (macOS)
+- React Native CLI
+- Android Studio (Android 개발용)
+- Xcode (iOS 개발용)
 
-### iOS
+### 설치 및 실행
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+1.  **프로젝트 클론:**
+    bash git clone [Your-Repository-Link]  cd studyRN
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+2.  **의존성 설치:**
+    ```bash
+    npm install

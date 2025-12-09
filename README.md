@@ -51,7 +51,8 @@
 ### 설치 및 실행
 
 1.  **프로젝트 클론:**
-    bash git clone [Your-Repository-Link]  cd studyRN
+    ```bash 
+    git clone [Your-Repository-Link]  cd studyRN
 
 2.  **의존성 설치:**
     ```bash

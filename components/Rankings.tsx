@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react'; // useEffect 대신 useCallback 임포트
 import {
   View,
   Text,
@@ -7,15 +7,14 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native'; // useFocusEffect 임포트
 import firestore from '@react-native-firebase/firestore';
 import auth from '@react-native-firebase/auth';
 
 interface RankingData {
   id: string; // userId
   rank: number;
-  // email을 직접 저장하는 것은 보안상 좋지 않으므로, 닉네임 등을 사용해야 함
-  // 여기서는 예시로 email 앞부분만 사용
-  displayName: string; 
+  displayName: string;
   totalStudyTime: string; // "HH시간 MM분" 형식
 }
 
@@ -24,17 +23,37 @@ const Rankings: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [myRank, setMyRank] = useState<RankingData | null>(null);
 
-  useEffect(() => {
-    fetchRankings();
-  }, []);
+  // [수정] useEffect를 useFocusEffect로 변경
+  useFocusEffect(
+    useCallback(() => {
+      console.log('랭킹 화면 포커스됨. 데이터 새로고침 시작.');
+      fetchRankings();
+
+      // 클린업 함수
+      return () => {
+        console.log('랭킹 화면 포커스 잃음.');
+        // 로딩 상태를 다시 true로 설정하여 다음 포커스 시 로딩 인디케이터를 보여줄 수 있음
+        setLoading(true);
+      };
+    }, [])
+  );
 
   const fetchRankings = async () => {
     setLoading(true);
     try {
-      // 1. 모든 사용자의 공부 기록 가져오기
+      // 1. 모든 사용자의 정보 가져오기 (닉네임 사용을 위해)
+      const usersSnapshot = await firestore().collection('users').get();
+      const usersData: { [id: string]: { displayName: string } } = {};
+      usersSnapshot.forEach(doc => {
+        usersData[doc.id] = {
+          displayName: doc.data().displayName || `User...${doc.id.substring(doc.id.length - 4)}`,
+        };
+      });
+
+      // 2. 모든 사용자의 공부 기록 가져오기
       const sessionsSnapshot = await firestore().collection('study_sessions').get();
 
-      // 2. 사용자별로 총 공부 시간 집계 (userId -> totalSeconds)
+      // 3. 사용자별로 총 공부 시간 집계 (userId -> totalSeconds)
       const userStudyData: { [userId: string]: number } = {};
       sessionsSnapshot.forEach(doc => {
         const { userId, durationInSeconds } = doc.data();
@@ -44,30 +63,36 @@ const Rankings: React.FC = () => {
         userStudyData[userId] += durationInSeconds;
       });
 
-      // 3. 총 공부 시간을 기준으로 내림차순 정렬
+      // 4. 총 공부 시간을 기준으로 내림차순 정렬
       const sortedUsers = Object.entries(userStudyData).sort(([, a], [, b]) => b - a);
 
-      // 4. 랭킹 데이터 객체로 변환
+      // 5. 랭킹 데이터 객체로 변환 (users 컬렉션의 displayName 사용)
       const rankingData: RankingData[] = sortedUsers.map(([userId, totalSeconds], index) => {
-        // 간단한 닉네임 생성 (예: 'user...1234')
-        // 실제로는 users 컬렉션에서 닉네임을 가져와야 함
-        const displayName = `User...${userId.substring(userId.length - 4)}`;
-        
         return {
           id: userId,
           rank: index + 1,
-          displayName,
+          displayName: usersData[userId]?.displayName || `알 수 없음`,
           totalStudyTime: formatSeconds(totalSeconds),
         };
       });
 
       setRankings(rankingData);
 
-      // 5. 내 순위 찾기
+      // 6. 내 순위 찾기
       const currentUser = auth().currentUser;
       if (currentUser) {
         const myRankingData = rankingData.find(r => r.id === currentUser.uid);
-        setMyRank(myRankingData || null);
+        if(myRankingData) {
+          setMyRank(myRankingData);
+        } else {
+          // 공부 기록이 없어 랭킹에 없는 경우
+          setMyRank({
+            id: currentUser.uid,
+            rank: 0, // 랭크 없음 표시
+            displayName: usersData[currentUser.uid]?.displayName || '나',
+            totalStudyTime: '기록 없음'
+          });
+        }
       }
 
     } catch (error) {
@@ -108,7 +133,7 @@ const Rankings: React.FC = () => {
         <View style={styles.myRankContainer}>
           <Text style={styles.myRankTitle}>내 순위</Text>
           <View style={[styles.itemContainer, styles.myItem]}>
-            <Text style={[styles.rank, myRank.rank <= 3 && styles.topRank]}>{myRank.rank}</Text>
+            <Text style={[styles.rank, myRank.rank > 0 && myRank.rank <= 3 && styles.topRank]}>{myRank.rank > 0 ? myRank.rank : '-'}</Text>
             <Text style={styles.name}>{myRank.displayName}</Text>
             <Text style={styles.time}>{myRank.totalStudyTime}</Text>
           </View>
@@ -119,6 +144,7 @@ const Rankings: React.FC = () => {
         renderItem={renderItem}
         keyExtractor={item => item.id}
         ListHeaderComponent={<Text style={styles.listTitle}>전체 랭킹</Text>}
+        ListEmptyComponent={<Text style={styles.emptyText}>랭킹 데이터가 없습니다.</Text>}
       />
     </View>
   );
@@ -139,28 +165,34 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderColor: '#eee',
+    elevation: 2,
   },
   myRankTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 10,
+    color: '#333',
   },
   listTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     padding: 15,
     backgroundColor: '#f9f9f9',
+    color: '#333',
   },
   itemContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 15,
+    paddingVertical: 15,
+    paddingHorizontal: 20,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#f0f0f0',
   },
   myItem: {
-    backgroundColor: '#FFF3E0', // 하이라이트 색상
+    backgroundColor: '#FFF8E1',
+    borderLeftWidth: 4,
+    borderLeftColor: '#FFC107',
   },
   rank: {
     fontSize: 18,
@@ -174,10 +206,18 @@ const styles = StyleSheet.create({
   name: {
     flex: 1,
     fontSize: 16,
+    color: '#333',
   },
   time: {
     fontSize: 16,
     fontWeight: '500',
+    color: '#555',
+  },
+  emptyText: {
+    textAlign: 'center',
+    marginTop: 50,
+    fontSize: 16,
+    color: '#999',
   },
 });
 

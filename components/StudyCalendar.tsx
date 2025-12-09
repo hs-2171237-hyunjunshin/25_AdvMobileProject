@@ -1,15 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Alert } from 'react-native';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
-import type { DateData, MarkedDates } from 'react-native-calendars/src/types';
+import type { DateData } from 'react-native-calendars/src/types';
 import firestore from '@react-native-firebase/firestore';
 import auth from '@react-native-firebase/auth';
+import { useFocusEffect } from '@react-navigation/native';
+import PieChart from 'react-native-pie-chart';
 
-// react-native-calendars 한글 설정
+// 한글 설정
 LocaleConfig.locales['ko'] = {
-  monthNames: [
-    '1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'
-  ],
+  monthNames: ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'],
   monthNamesShort: ['1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.', '11.', '12.'],
   dayNames: ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'],
   dayNamesShort: ['일', '월', '화', '수', '목', '금', '토'],
@@ -17,28 +17,31 @@ LocaleConfig.locales['ko'] = {
 };
 LocaleConfig.defaultLocale = 'ko';
 
-interface StudySession {
-  date: string;
-  totalDuration: number; // 분 단위
+// 학습 세션 데이터 타입 정의
+interface SessionsByDate {
+  [date: string]: {
+    totalSeconds: number;
+    subjects: { [subject: string]: number };
+  };
 }
 
 const StudyCalendar: React.FC = () => {
-  const [markedDates, setMarkedDates] = useState<MarkedDates>({});
-  const [selectedDate, setSelectedDate] = useState('');
-  const [dailyStudyTime, setDailyStudyTime] = useState(0);
+  const [sessionsByDate, setSessionsByDate] = useState<SessionsByDate>({});
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
 
+  const monthRef = useRef(currentMonthDate);
   useEffect(() => {
-    // 컴포넌트 마운트 시 이번 달 공부 기록을 가져옵니다.
-    fetchStudySessions(new Date());
-  }, []);
+    monthRef.current = currentMonthDate;
+  }, [currentMonthDate]);
 
-  // Firestore에서 공부 기록을 가져오는 함수
-  const fetchStudySessions = async (date: Date) => {
+  const fetchStudySessions = useCallback(async (dateToFetch: Date) => {
+    console.log(`[Calendar] 데이터 요청: ${dateToFetch.getFullYear()}년 ${dateToFetch.getMonth() + 1}월`);
     const currentUser = auth().currentUser;
     if (!currentUser) return;
 
-    const startOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
-    const endOfMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+    const startOfMonth = new Date(dateToFetch.getFullYear(), dateToFetch.getMonth(), 1);
+    const endOfMonth = new Date(dateToFetch.getFullYear(), dateToFetch.getMonth() + 1, 0, 23, 59, 59);
 
     try {
       const querySnapshot = await firestore()
@@ -48,98 +51,182 @@ const StudyCalendar: React.FC = () => {
         .where('completedAt', '<=', endOfMonth)
         .get();
 
-      // 날짜별로 공부 시간 집계
-      const sessionsByDate: { [key: string]: number } = {};
+      if (querySnapshot.empty) {
+        console.log('[Calendar] 해당 월에 데이터 없음.');
+        setSessionsByDate(prev => {
+          const nextState = { ...prev };
+          Object.keys(nextState).forEach(date => {
+            const d = new Date(date);
+            if (d.getFullYear() === dateToFetch.getFullYear() && d.getMonth() === dateToFetch.getMonth()) {
+              delete nextState[date];
+            }
+          });
+          return nextState;
+        });
+        return;
+      }
+
+      const newSessions: SessionsByDate = {};
       querySnapshot.forEach(doc => {
         const data = doc.data();
         if (data.completedAt) {
           const dateString = data.completedAt.toDate().toISOString().split('T')[0];
-          if (!sessionsByDate[dateString]) {
-            sessionsByDate[dateString] = 0;
+          const subject = data.subject || '기타';
+          if (!newSessions[dateString]) {
+            newSessions[dateString] = { totalSeconds: 0, subjects: {} };
           }
-          sessionsByDate[dateString] += data.durationInSeconds;
+          newSessions[dateString].totalSeconds += data.durationInSeconds;
+          if (!newSessions[dateString].subjects[subject]) {
+            newSessions[dateString].subjects[subject] = 0;
+          }
+          newSessions[dateString].subjects[subject] += data.durationInSeconds;
         }
       });
-
-      // 달력에 표시할 markedDates 객체 생성
-      const newMarkedDates: MarkedDates = {};
-      for (const date in sessionsByDate) {
-        newMarkedDates[date] = { marked: true, dotColor: '#FF8F00' };
-      }
-      setMarkedDates(newMarkedDates);
-
+      setSessionsByDate(prev => ({ ...prev, ...newSessions }));
     } catch (error) {
-      console.error("공부 기록 로딩 실패:", error);
+      console.error("[Calendar] 공부 기록 로딩 실패:", error);
       Alert.alert('오류', '공부 기록을 불러오는 데 실패했습니다.');
     }
+  }, []);
+
+  useFocusEffect(useCallback(() => { fetchStudySessions(monthRef.current); }, [fetchStudySessions]));
+
+  const onMonthChange = (date: DateData) => {
+    const newMonthDate = new Date(date.timestamp);
+    setCurrentMonthDate(newMonthDate);
+    fetchStudySessions(newMonthDate);
   };
 
-  // 날짜 선택 시 실행될 함수
-  const handleDayPress = (day: DateData) => {
-    setSelectedDate(day.dateString);
-    // 선택된 날짜의 공부 시간을 계산하여 표시 (여기서는 간단히 예시)
-    // 실제로는 fetch한 데이터에서 해당 날짜의 시간을 찾아야 합니다.
-  };
+  const markedDates = useMemo(() => {
+    const marked: { [key: string]: any } = {};
+    for (const date in sessionsByDate) {
+      const dailyTotal = sessionsByDate[date].totalSeconds;
+      const hours = dailyTotal / 3600;
+      let opacity = Math.min(1, Math.max(0.2, hours / 4));
+      marked[date] = {
+        customStyles: {
+          container: { backgroundColor: `rgba(255, 143, 0, ${opacity})`, borderRadius: 8 },
+          text: { color: opacity > 0.6 ? 'white' : 'black', fontWeight: 'bold' },
+        },
+      };
+    }
+    if (marked[selectedDate]) {
+      marked[selectedDate].customStyles.container.borderColor = '#AD5A00';
+      marked[selectedDate].customStyles.container.borderWidth = 2;
+    } else {
+      marked[selectedDate] = {
+        customStyles: {
+          container: { borderColor: '#FF8F00', borderWidth: 2, borderRadius: 8 },
+          text: { color: '#FF8F00' }
+        }
+      };
+    }
+    return marked;
+  }, [sessionsByDate, selectedDate]);
 
-  // 달력이 변경될 때 실행될 함수
-  const handleMonthChange = (date: DateData) => {
-    fetchStudySessions(new Date(date.timestamp));
+  const weeklyData = useMemo(() => {
+    const startOfWeek = new Date(selectedDate);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    let totalSeconds = 0;
+    const subjects: { [subject: string]: number } = {};
+    for (let i = 0; i < 7; i++) {
+      const currentDate = new Date(startOfWeek);
+      currentDate.setDate(currentDate.getDate() + i);
+      const dateString = currentDate.toISOString().split('T')[0];
+      if (sessionsByDate[dateString]) {
+        totalSeconds += sessionsByDate[dateString].totalSeconds;
+        for (const subject in sessionsByDate[dateString].subjects) {
+          if (!subjects[subject]) subjects[subject] = 0;
+          subjects[subject] += sessionsByDate[dateString].subjects[subject];
+        }
+      }
+    }
+    return { totalSeconds, subjects };
+  }, [selectedDate, sessionsByDate]);
+
+  const chartData = useMemo(() => {
+    const subjects = Object.entries(weeklyData.subjects).filter(([, value]) => value > 0);
+    if (subjects.length === 0) return null;
+
+    const series = subjects.map(([subject, seconds], index) => {
+          const defaultColors = ['#FF8F00', '#FFC107', '#4CAF50', '#2196F3', '#9C27B0', '#795548'];
+          return {
+            value: seconds,
+            color: defaultColors[index % defaultColors.length],
+            legend: subject, // 범례(legend)에 사용할 이름 추가
+          };
+        });
+
+        return { series };
+      }, [weeklyData.subjects]);
+
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) return `${h}시간 ${m}분`;
+    return `${m}분`;
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container}>
       <Text style={styles.title}>스터디 캘린더</Text>
       <Calendar
         style={styles.calendar}
+        current={currentMonthDate.toISOString().split('T')[0]}
+        onDayPress={(day: DateData) => setSelectedDate(day.dateString)}
+        onMonthChange={onMonthChange}
+        markingType={'custom'}
         markedDates={markedDates}
-        onDayPress={handleDayPress}
-        onMonthChange={handleMonthChange}
-        theme={{
-          selectedDayBackgroundColor: '#FF8F00',
-          arrowColor: '#FF8F00',
-          todayTextColor: '#FF8F00',
-        }}
+        theme={{ calendarBackground: '#ffffff' }}
       />
-      {selectedDate ? (
+      <View style={styles.infoContainer}>
         <View style={styles.infoBox}>
-          <Text style={styles.infoText}>
-            {selectedDate}의 공부 기록은 향후 추가될 예정입니다.
-          </Text>
+          <Text style={styles.infoTitle}>주간 총 공부 시간</Text>
+          <Text style={styles.infoContent}>{formatTime(weeklyData.totalSeconds)}</Text>
         </View>
-      ) : null}
-    </View>
+        <View style={styles.infoBox}>
+          <Text style={styles.infoTitle}>과목별 공부 비중 (주간)</Text>
+          {chartData ? (
+            <View style={styles.chartContainer}>
+              <PieChart
+                widthAndHeight={120}
+                series={chartData.series} // series 객체 배열을 그대로 전달
+                sliceColor={chartData.series.map(item => item.color)} // sliceColor는 여전히 필요할 수 있음
+                coverRadius={0.6}
+                coverFill={'#FFF'}
+              />
+              <View style={styles.legendContainer}>
+                {chartData.series.map(item => (
+                  <View key={item.legend} style={styles.legendItem}>
+                    <View style={[styles.legendColor, { backgroundColor: item.color }]} />
+                    <Text style={styles.legendText}>{item.legend} ({formatTime(item.value)})</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : (
+            <Text style={styles.noDataText}>이번 주 공부 기록이 없습니다.</Text>
+          )}
+        </View>
+      </View>
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginVertical: 20,
-    color: '#333',
-  },
-  calendar: {
-    borderWidth: 1,
-    borderColor: '#eee',
-    borderRadius: 8,
-    marginHorizontal: 10,
-  },
-  infoBox: {
-    marginTop: 20,
-    marginHorizontal: 20,
-    padding: 15,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 8,
-  },
-  infoText: {
-    fontSize: 16,
-    textAlign: 'center',
-  },
+    container: { flex: 1, backgroundColor: '#f9f9f9' },
+    title: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginVertical: 20 },
+    calendar: { borderWidth: 1, borderColor: '#eee', borderRadius: 8, marginHorizontal: 10, elevation: 2 },
+    infoContainer: { padding: 20 },
+    infoBox: { backgroundColor: '#fff', borderRadius: 8, padding: 20, marginBottom: 20, elevation: 2 },
+    infoTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
+    infoContent: { fontSize: 24, fontWeight: 'bold', color: '#FF8F00', textAlign: 'center' },
+    chartContainer: { flexDirection: 'row', alignItems: 'center', marginTop: 10, justifyContent: 'center' },
+    legendContainer: { flex: 1, marginLeft: 20 },
+    legendItem: { flexDirection: 'row', alignItems: 'center', marginVertical: 4 },
+    legendColor: { width: 14, height: 14, borderRadius: 7, marginRight: 8 },
+    legendText: { fontSize: 14, flexShrink: 1 },
+    noDataText: { textAlign: 'center', color: '#888', marginTop: 20 },
 });
 
 export default StudyCalendar;

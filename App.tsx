@@ -104,14 +104,20 @@ export default function App() {
         });
     };
 
-const handleSignUp = (email: string, pass: string) => {
+const handleSignUp = (email: string, pass: string, passConfirm: string) => {
     const trimmedEmail = email.trim();
     const trimmedPass = pass.trim();
+    const trimmedPassConfirm = passConfirm.trim();
 
     if (!trimmedEmail || !trimmedPass) {
         Alert.alert('오류', '이메일과 비밀번호를 입력해주세요.');
         return;
     }
+
+    if (trimmedPass !== trimmedPassConfirm) {
+          Alert.alert('가입 오류', '비밀번호가 일치하지 않습니다.');
+          return;
+        }
 
     auth()
       .createUserWithEmailAndPassword(trimmedEmail, trimmedPass)
@@ -119,6 +125,19 @@ const handleSignUp = (email: string, pass: string) => {
         console.log('회원가입 성공:', userCredential.user.email);
         Alert.alert('환영합니다!', '회원가입이 완료되어 자동으로 로그인되었습니다.');
         // Firestore에 사용자 정보 저장 로직 (선택사항)
+        const { uid, email } = userCredential.user;
+                firestore().collection('users').doc(uid).set({
+                  email: email,
+                  displayName: email?.split('@')[0],
+                  createdAt: firestore.FieldValue.serverTimestamp(),
+                  subjects: ['수학', '영어', '코딩', '과학', '기타'],
+                  // [추가] 뽀모도로 기본 설정값 (분 단위)
+                  pomodoroSettings: {
+                    focus: 25,
+                    shortBreak: 5,
+                    longBreak: 15,
+                  },
+                });
       })
       .catch(error => {
         if (error.code === 'auth/email-already-in-use') {

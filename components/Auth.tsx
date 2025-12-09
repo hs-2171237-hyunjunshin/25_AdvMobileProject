@@ -14,16 +14,23 @@ import {
 // Props 타입 정의 수정: onSignUp 추가
 interface AuthProps {
   onLogin: (email: string, pass: string) => void;
-  onSignUp: (email: string, pass: string) => void;
+  onSignUp: (email: string, pass: string, passConfirm: string) => void;
 }
 
 const Auth: React.FC<AuthProps> = ({ onLogin, onSignUp }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoginMode, setIsLoginMode] = useState(true); // 로그인/회원가입 모드 상태
+  const [passwordConfirm, setPasswordConfirm] = useState(''); // 비밀번호 확인 상태 추가
+  const [isLoginMode, setIsLoginMode] = useState(true);
 
   // 모드 전환 함수
-  const toggleMode = () => setIsLoginMode(prevMode => !prevMode);
+  const toggleMode = () => {
+      setIsLoginMode(!isLoginMode);
+      // 모드 전환 시 입력 필드 초기화
+      setEmail('');
+      setPassword('');
+      setPasswordConfirm('');
+    };
 
   // 제출 버튼 핸들러
   const handleSubmit = () => {
@@ -33,9 +40,9 @@ const Auth: React.FC<AuthProps> = ({ onLogin, onSignUp }) => {
     }
     // 모드에 따라 적절한 함수 호출
     if (isLoginMode) {
-      onLogin(email, password);
+          onLogin(email, password);
     } else {
-      onSignUp(email, password);
+          onSignUp(email, password, passwordConfirm); // passwordConfirm 전달
     }
   };
 
@@ -74,6 +81,17 @@ const Auth: React.FC<AuthProps> = ({ onLogin, onSignUp }) => {
             onChangeText={setPassword}
             secureTextEntry
           />
+
+          {!isLoginMode && (
+                      <TextInput
+                        style={styles.input}
+                        placeholder="비밀번호를 다시 입력하세요"
+                        placeholderTextColor="#888"
+                        value={passwordConfirm}
+                        onChangeText={setPasswordConfirm}
+                        secureTextEntry
+                      />
+                    )}
 
           {/* 메인 액션 버튼 */}
           <TouchableOpacity style={styles.button} onPress={handleSubmit}>

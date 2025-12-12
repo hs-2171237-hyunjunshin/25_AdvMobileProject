@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Alert, ScrollView, TextInput, Button } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import type { DateData } from 'react-native-calendars/src/types';
 import firestore from '@react-native-firebase/firestore';
@@ -24,11 +24,44 @@ interface SessionsByDate {
     subjects: { [subject: string]: number };
   };
 }
+  export async function addDeadline(dateString: string, title: string, time: string) { 
+  try {
+    const currentUser = auth().currentUser;
+    if (!currentUser) {
+    Alert.alert("오류", "로그인이 필요합니다.");
+    return;
+  }
+    
+    // 이전에 정의되어 있지 않던 isCompleted 필드도 추가
+    await firestore()
+      .collection("deadlines")
+      .add({
+        userId: currentUser.uid,
+        date: dateString,
+        title: title,
+        time: time,
+        isCompleted: false, // 이 필드가 있어야 나중에 체크박스 구현 가능
+        createdAt: firestore.FieldValue.serverTimestamp(),
+      });
+
+    Alert.alert("성공", "마감일이 저장되었습니다!");
+
+  } catch (error) {
+    console.log("마감일 저장 실패:", error);
+    Alert.alert("오류", "마감일 저장 중 문제가 발생했습니다.");
+  }
+}
 
 const StudyCalendar: React.FC = () => {
   const [sessionsByDate, setSessionsByDate] = useState<SessionsByDate>({});
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
+
+  //마감일 관련
+  const [deadlineModalVisible, setDeadlineModalVisible] = useState(false);
+  const [deadlineTitle, setDeadlineTitle] = useState("");
+  const [deadlineTime, setDeadlineTime] = useState("18:00");
+
 
   const monthRef = useRef(currentMonthDate);
   useEffect(() => {
@@ -168,12 +201,18 @@ const StudyCalendar: React.FC = () => {
   };
 
   return (
+    <>
     <ScrollView style={styles.container}>
       <Text style={styles.title}>스터디 캘린더</Text>
       <Calendar
         style={styles.calendar}
         current={currentMonthDate.toISOString().split('T')[0]}
-        onDayPress={(day: DateData) => setSelectedDate(day.dateString)}
+
+        onDayPress={(day: DateData) => {
+           setSelectedDate(day.dateString);
+           setDeadlineModalVisible(true);  //마감일 추가
+        }}
+
         onMonthChange={onMonthChange}
         markingType={'custom'}
         markedDates={markedDates}
@@ -210,6 +249,54 @@ const StudyCalendar: React.FC = () => {
         </View>
       </View>
     </ScrollView>
+    {deadlineModalVisible && (
+  <View style={styles.modalOverlay}> {/* 1. 바깥쪽: 어두운 반투명 배경 */}
+    <View style={styles.modalContent}> {/* 2. 안쪽: 하얀색 중앙 박스 */}
+      
+      <Text style={styles.modalTitle}>마감일 추가</Text>
+
+      <TextInput
+        placeholder="내용 입력"
+        placeholderTextColor="#888"
+        style={styles.input}
+        value={deadlineTitle}
+        onChangeText={setDeadlineTitle}
+      />
+
+      <TextInput
+        placeholder="시간 (예: 18:00)"
+        placeholderTextColor="#888"
+        style={styles.input}
+        value={deadlineTime}
+        onChangeText={setDeadlineTime}
+      />
+
+      {/* 버튼들을 가로로 배치하기 위한 컨테이너 */}
+      <View style={styles.buttonContainer}>
+        <View style={styles.buttonWrapper}>
+          <Button
+            title="저장"
+            onPress={async () => {
+              await addDeadline(selectedDate, deadlineTitle, deadlineTime);
+              setDeadlineModalVisible(false);
+              setDeadlineTitle("");
+              setDeadlineTime("18:00");
+            }}
+          />
+        </View>
+        <View style={styles.buttonWrapper}>
+          <Button 
+            title="닫기" 
+            color="red" 
+            onPress={() => setDeadlineModalVisible(false)} 
+          />
+        </View>
+      </View>
+
+    </View>
+  </View>
+)}
+    </>
   );
 };
 
@@ -227,6 +314,54 @@ const styles = StyleSheet.create({
     legendColor: { width: 14, height: 14, borderRadius: 7, marginRight: 8 },
     legendText: { fontSize: 14, flexShrink: 1 },
     noDataText: { textAlign: 'center', color: '#888', marginTop: 20 },
+    //마감일관련 추가
+    modalOverlay: {
+    position: 'absolute', 
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)', 
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000, //
+  },
+  modalContent: {
+    width: '85%',
+    backgroundColor: 'white',
+    padding: 25,
+    borderRadius: 15, 
+    elevation: 10,
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+    color: '#333',
+  },
+  input: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 15,
+    fontSize: 16,
+    backgroundColor: '#f9f9f9', 
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between', 
+    marginTop: 10,
+  },
+  buttonWrapper: {
+    width: '48%',
+  },
 });
 
 export default StudyCalendar;

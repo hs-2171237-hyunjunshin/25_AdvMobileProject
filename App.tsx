@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Alert, StatusBar, useColorScheme } from 'react-native'; // Alert 추가
+import { Alert, StatusBar, useColorScheme } from 'react-native';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore'; // 🔹추가
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 
 // 화면 컴포넌트 임포트
@@ -13,8 +14,9 @@ import StudyTimerScreen from './components/StudyTimer';
 import StudyCalendarScreen from './components/StudyCalendar';
 import RankingsScreen from './components/Rankings';
 import ProfileScreen from './components/Profile';
-import StudyGroupsScreen from './components/StudyGroups'; // 추가
-import NotificationsScreen from './components/Notifications'; // 추가
+import StudyGroupsScreen from './components/StudyGroups'; // 그룹 탭
+import GroupDetailScreen from './components/groups/GroupDetailScreen'; // 그룹 상세
+import NotificationsScreen from './components/Notifications';
 
 // 네비게이터 생성
 const Stack = createNativeStackNavigator();
@@ -29,9 +31,9 @@ function MainAppTabs() {
           let iconName: string = 'help';
           if (route.name === '타이머') iconName = 'timer';
           else if (route.name === '캘린더') iconName = 'event';
-          else if (route.name === '그룹') iconName = 'groups'; // 아이콘 설정 추가
+          else if (route.name === '그룹') iconName = 'groups';
           else if (route.name === '랭킹') iconName = 'leaderboard';
-          else if (route.name === '알림') iconName = 'notifications'; // 아이콘 설정 추가
+          else if (route.name === '알림') iconName = 'notifications';
           else if (route.name === '프로필') iconName = 'person';
           return <MaterialIcons name={iconName} size={size} color={color} />;
         },
@@ -77,67 +79,65 @@ export default function App() {
 
   // onLogin 함수 정의 (Auth 컴포넌트에 전달)
   const handleLogin = (email: string, pass: string) => {
-      const trimmedEmail = email.trim();
-      const trimmedPass = pass.trim();
+    const trimmedEmail = email.trim();
+    const trimmedPass = pass.trim();
 
-      if (!trimmedEmail || !trimmedPass) {
-          Alert.alert('오류', '이메일과 비밀번호를 입력해주세요.');
-          return;
-      }
+    if (!trimmedEmail || !trimmedPass) {
+      Alert.alert('오류', '이메일과 비밀번호를 입력해주세요.');
+      return;
+    }
 
-      auth()
-        .signInWithEmailAndPassword(trimmedEmail, trimmedPass)
-        .then(userCredential => {
-          console.log('로그인 성공:', userCredential.user.email);
-        })
-        .catch(error => {
-          // 로그인 실패 시 오류 메시지만 표시
-          if (error.code === 'auth/user-not-found') {
-            Alert.alert('로그인 오류', '존재하지 않는 계정입니다.');
-          } else if (error.code === 'auth/wrong-password') {
-            Alert.alert('로그인 오류', '비밀번호가 일치하지 않습니다.');
-          } else if (error.code === 'auth/invalid-email') {
-            Alert.alert('오류', '올바르지 않은 이메일 형식입니다.');
-          } else {
-            Alert.alert('로그인 오류', '로그인에 실패했습니다. 네트워크 상태를 확인해주세요.');
-          }
-        });
-    };
+    auth()
+      .signInWithEmailAndPassword(trimmedEmail, trimmedPass)
+      .then(userCredential => {
+        console.log('로그인 성공:', userCredential.user.email);
+      })
+      .catch(error => {
+        if (error.code === 'auth/user-not-found') {
+          Alert.alert('로그인 오류', '존재하지 않는 계정입니다.');
+        } else if (error.code === 'auth/wrong-password') {
+          Alert.alert('로그인 오류', '비밀번호가 일치하지 않습니다.');
+        } else if (error.code === 'auth/invalid-email') {
+          Alert.alert('오류', '올바르지 않은 이메일 형식입니다.');
+        } else {
+          Alert.alert('로그인 오류', '로그인에 실패했습니다. 네트워크 상태를 확인해주세요.');
+        }
+      });
+  };
 
-const handleSignUp = (email: string, pass: string, passConfirm: string) => {
+  const handleSignUp = (email: string, pass: string, passConfirm: string) => {
     const trimmedEmail = email.trim();
     const trimmedPass = pass.trim();
     const trimmedPassConfirm = passConfirm.trim();
 
     if (!trimmedEmail || !trimmedPass) {
-        Alert.alert('오류', '이메일과 비밀번호를 입력해주세요.');
-        return;
+      Alert.alert('오류', '이메일과 비밀번호를 입력해주세요.');
+      return;
     }
 
     if (trimmedPass !== trimmedPassConfirm) {
-          Alert.alert('가입 오류', '비밀번호가 일치하지 않습니다.');
-          return;
-        }
+      Alert.alert('가입 오류', '비밀번호가 일치하지 않습니다.');
+      return;
+    }
 
     auth()
       .createUserWithEmailAndPassword(trimmedEmail, trimmedPass)
       .then(userCredential => {
         console.log('회원가입 성공:', userCredential.user.email);
         Alert.alert('환영합니다!', '회원가입이 완료되어 자동으로 로그인되었습니다.');
-        // Firestore에 사용자 정보 저장 로직 (선택사항)
-        const { uid, email } = userCredential.user;
-                firestore().collection('users').doc(uid).set({
-                  email: email,
-                  displayName: email?.split('@')[0],
-                  createdAt: firestore.FieldValue.serverTimestamp(),
-                  subjects: ['수학', '영어', '코딩', '과학', '기타'],
-                  // [추가] 뽀모도로 기본 설정값 (분 단위)
-                  pomodoroSettings: {
-                    focus: 25,
-                    shortBreak: 5,
-                    longBreak: 15,
-                  },
-                });
+
+        const { uid, email: userEmail } = userCredential.user;
+        firestore().collection('users').doc(uid).set({
+          email: userEmail,
+          displayName: userEmail?.split('@')[0],
+          createdAt: firestore.FieldValue.serverTimestamp(),
+          subjects: ['수학', '영어', '코딩', '과학', '기타'],
+          pomodoroSettings: {
+            focus: 25,
+            shortBreak: 5,
+            longBreak: 15,
+          },
+        });
       })
       .catch(error => {
         if (error.code === 'auth/email-already-in-use') {
@@ -157,7 +157,14 @@ const handleSignUp = (email: string, pass: string, passConfirm: string) => {
       <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {user ? (
-          <Stack.Screen name="MainApp" component={MainAppTabs} />
+          <>
+            <Stack.Screen name="MainApp" component={MainAppTabs} />
+            <Stack.Screen
+              name="GroupDetail"
+              component={GroupDetailScreen}
+              options={{ headerShown: true, title: '그룹 상세' }}
+            />
+          </>
         ) : (
           <Stack.Screen name="Auth">
             {() => <AuthScreen onLogin={handleLogin} onSignUp={handleSignUp} />}

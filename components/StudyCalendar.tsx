@@ -5,7 +5,8 @@ import type { DateData } from 'react-native-calendars/src/types';
 import firestore from '@react-native-firebase/firestore';
 import auth from '@react-native-firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
-import PieChart from 'react-native-pie-chart';
+import TaskStatsPie from './notification/TaskStatsPie';
+import notifee, { TriggerType, AndroidImportance } from '@notifee/react-native';
 
 
 // 한글 설정
@@ -25,41 +26,136 @@ interface SessionsByDate {
     subjects: { [subject: string]: number };
   };
 }
-interface Assignment {
+  export async function addDeadline(dateString: string, title: string, time: string) {
+  try {
+    const currentUser = auth().currentUser;
+    if (!currentUser) {
+      Alert.alert("오류", "로그인이 필요합니다.");
+      return;
+    }
+
+    if (!title.trim()) {
+      Alert.alert("알림", "내용을 입력해주세요.");
+      return;
+    }
+
+    //권한 및 채널 설정
+    await notifee.requestPermission();
+    const channelId = await notifee.createChannel({
+      id: 'deadline-alert',
+      name: '마감일 알림',
+      importance: AndroidImportance.HIGH,
+    });
+
+    // 날짜 계산
+    const deadlineDate = new Date(`${dateString}T${time}:00`);
+    const deadlineTime = deadlineDate.getTime();
+    
+    //예약 함수 정의
+    const scheduleAlert = async (triggerTime: number, bodyText: string) => {
+      const now = Date.now();
+      if (triggerTime > now) {
+        await notifee.createTriggerNotification(
+          {
+            title: ` 마감 임박: ${title}`,
+            body: bodyText,
+            android: { channelId, pressAction: { id: 'default' }, smallIcon: 'ic_launcher' },
+          },
+          { type: TriggerType.TIMESTAMP, timestamp: triggerTime }
+        );
+      }
+    };
+
+    // 24시간 전, 1시간 전 예약 실행
+    await scheduleAlert(deadlineTime - (24 * 60 * 60 * 1000), "마감 하루 전입니다! 준비하세요 🔥");
+    await scheduleAlert(deadlineTime - (1 * 60 * 60 * 1000), "마감 1시간 전입니다! ⏳");
+
+    // deadlines 컬렉션에 저장 (캘린더 표시용)
+    await firestore().collection("deadlines").add({
+      userId: currentUser.uid,
+      date: dateString,
+      title: title,
+      time: time,
+      isCompleted: false,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+    });
+
+    // 마감일이 생성기록
+    await firestore().collection("notifications").add({
+      userId: currentUser.uid,
+      type: "deadline_created",
+      title: "새로운 마감일 설정됨",
+      message: `'${title}' 마감일(${dateString} ${time})이 등록되었습니다.`,
+      isRead: false,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+    });
+
+    Alert.alert("성공", "마감일과 알림이 설정되었습니다!");
+
+  } catch (error) {
+    console.error("저장 실패:", error);
+    Alert.alert("오류", "문제가 발생했습니다.");
+  }
+}
+interface ScheduleItem {
   id: string;
   title: string;
   dueDate: string;
   description: string;
+  isGroupSchedule?: boolean; // 그룹 일정 여부
+  groupName?: string; // 그룹 이름
 }
 
-interface AssignmentsByDate {
-  [date: string]: Assignment[];
+interface SchedulesByDate {
+  [date: string]: ScheduleItem[];
 }
-
-const getStartOfMonth = (date: Date): Date => {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-};
-
-const getEndOfMonth = (date: Date): Date => {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
-};
 
 
 const StudyCalendar: React.FC = () => {
   const [sessionsByDate, setSessionsByDate] = useState<SessionsByDate>({});
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
+  //개인 일정 및 과제 
   const [assignmentsByDate, setAssignmentsByDate] = useState<AssignmentsByDate>({});
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newAssignment, setNewAssignment] = useState({ title: '', description: '' });
 
+  //마감일 설정 관련
+  const [deadlineModalVisible, setDeadlineModalVisible] = useState(false);
+  const [deadlineTitle, setDeadlineTitle] = useState("");
+  const [deadlineTime, setDeadlineTime] = useState("18:00");
+
+  //마감일 불러오기
+  const [deadlineList, setDeadlineList] = useState<any[]>([]);
+  useEffect(() => {
+    const currentUser = auth().currentUser;
+    if (!currentUser) return;
+
+    // 'deadlines' 컬렉션에서 내 데이터만 실시간으로 가져옴
+    const unsubscribe = firestore()
+      .collection('deadlines')
+      .where('userId', '==', currentUser.uid)
+      //.orderBy('createdAt', 'desc') // 최신순 정렬
+      .onSnapshot(snapshot => {
+        if (!snapshot) return; 
+        const list = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setDeadlineList(list);
+      }, error => {
+        console.log("데이터 불러오기 에러:", error);
+      });
+
+    return () => unsubscribe();
+  }, []);
   const monthRef = useRef(currentMonthDate);
   useEffect(() => {
     monthRef.current = currentMonthDate;
   }, [currentMonthDate]);
 
 
-  const [groupSchedules, setGroupSchedules] = useState<AssignmentsByDate>({});
+  const [groupSchedules, setGroupSchedules] = useState<SchedulesByDate>({});
 
   const fetchStudySessions = useCallback(async (dateToFetch: Date) => {
     console.log(`[Calendar] 데이터 요청: ${dateToFetch.getFullYear()}년 ${dateToFetch.getMonth() + 1}월`);
@@ -154,7 +250,7 @@ const StudyCalendar: React.FC = () => {
           );
           const scheduleSnapshots = await Promise.all(schedulePromises);
 
-          const newSchedulesByDate: AssignmentsByDate = {};
+          const newSchedulesByDate: SchedulesByDate = {};
 
           scheduleSnapshots.forEach((snapshot, index) => {
             const groupId = joinedGroups[index];
@@ -162,7 +258,7 @@ const StudyCalendar: React.FC = () => {
               const data = doc.data();
 
               //그룹 일정 객체를 생성할 때, isGroupSchedule과 groupName을 추가합니다.
-              const schedule: Assignment = {
+              const schedule: ScheduleItem = {
                 id: `${groupId}_${doc.id}`, // ID가 겹치지 않도록 그룹ID와 문서ID를 조합
                 title: data.title,
                 dueDate: data.date, // 필드 이름을 개인 일정과 맞춤
@@ -201,10 +297,10 @@ const StudyCalendar: React.FC = () => {
               .where('dueDate', '<=', endOfMonth.toISOString().split('T')[0])
               .get();
 
-          const newAssignments: AssignmentsByDate = {};
+          const newAssignments: SchedulesByDate = {};
           querySnapshot.forEach(doc => {
               const data = doc.data() as Omit<Assignment, 'id'>;
-              const assignment: Assignment = { ...data, id: doc.id };
+              const assignment: ScheduleItem = { ...data, id: doc.id };
               if (!newAssignments[assignment.dueDate]) {
                   newAssignments[assignment.dueDate] = [];
               }
@@ -231,6 +327,29 @@ const StudyCalendar: React.FC = () => {
       fetchAssignments(newMonthDate);
       fetchGroupSchedules(newMonthDate);
   };
+  //마감일삭제
+  const handleDeleteDeadline = (id: string, title: string) => {
+    Alert.alert(
+      "마감일 삭제",
+      `'${title}' 항목을 삭제하시겠습니까?`,
+      [
+        { text: "취소", style: "cancel" },
+        { 
+          text: "삭제", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await firestore().collection('deadlines').doc(id).delete();
+              Alert.alert("삭제 완료", "마감일이 삭제되었습니다.");
+            } catch (error) {
+              console.error("삭제 실패:", error);
+              Alert.alert("오류", "삭제 중 문제가 발생했습니다.");
+            }
+          }
+        }
+      ]
+    );
+  };
 
   const markedDates = useMemo(() => {
         const marked: { [key: string]: any } = {};
@@ -254,7 +373,18 @@ const StudyCalendar: React.FC = () => {
 
 
         // 2. 과제/시험 일정에 대한 점 마킹
-        for (const date in assignmentsByDate) {
+        const allSchedules: SchedulesByDate = { ...assignmentsByDate };
+        Object.keys(groupSchedules).forEach(date => {
+            if (allSchedules[date]) {
+                // 해당 날짜에 이미 개인 일정이 있으면 그룹 일정을 뒤에 추가
+                allSchedules[date] = [...allSchedules[date], ...groupSchedules[date]];
+            } else {
+                // 해당 날짜에 개인 일정이 없으면 그룹 일정으로 새로 할당
+                allSchedules[date] = groupSchedules[date];
+            }
+        });
+    
+        for (const date in allSchedules) {
             if (!marked[date]) { marked[date] = {}; }
             if (!marked[date].customStyles) {
                 marked[date].customStyles = {
@@ -286,29 +416,28 @@ const StudyCalendar: React.FC = () => {
               allSchedules[date] = groupSchedules[date];
           }
       });
+    
+      for (const item of deadlineList) {
+          const date = item.date;
+          if (!marked[date]) { marked[date] = {}; }
+            if (!marked[date].customStyles) {
+                marked[date].customStyles = {
+                    container: {},
+                    text: {},
+                };
+            }
+            // 점(dot)을 표시하도록 설정
+            marked[date].marked = true;
+            marked[date].customStyles.dot = {
+                backgroundColor: '#007BFF', // 마감일은 파란색 점으로 표시 (구분)
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                marginTop: 1,
+            };
+        }
 
-      for (const date in allSchedules) {
-          if (!marked[date]) {
-              marked[date] = {}; // 기존 마킹이 없으면 새로 생성
-          }
-          if (!marked[date].customStyles) {
-              // 공부 기록 마킹이 없는 날을 위해 customStyles 기본값 생성
-              marked[date].customStyles = {
-                  container: {},
-                  text: {},
-              };
-          }
 
-          // 점(dot)을 표시하도록 설정
-          marked[date].marked = true;
-          marked[date].customStyles.dot = {
-              backgroundColor: '#B71C1C', // 점 색상
-              width: 8,
-              height: 8,
-              borderRadius: 4,
-              marginTop: 1,
-          };
-      }
 
         // 3. 선택된 날짜 스타일링 (안정성 강화)
         if (marked[selectedDate]) {
@@ -333,7 +462,7 @@ const StudyCalendar: React.FC = () => {
 
 
         return marked;
-      }, [sessionsByDate, assignmentsByDate,groupSchedules, selectedDate]);
+      }, [sessionsByDate, assignmentsByDate,groupSchedules, deadlineList, selectedDate]);
 
   const selectedDateSchedules = useMemo(() => {
       const personal = assignmentsByDate[selectedDate] || [];
@@ -408,14 +537,30 @@ const StudyCalendar: React.FC = () => {
           Alert.alert('오류', '일정 등록에 실패했습니다.');
       }
   };
+    // addDeadline 호출 후 마감일 목록 새로고침
+  const handleSaveDeadline = async () => {
+    await addDeadline(selectedDate, deadlineTitle, deadlineTime);
+    setDeadlineModalVisible(false);
+    setDeadlineTitle("");
+    setDeadlineTime("18:00");
+    // 마감일이 firestore에 추가되면 useEffect에 의해 deadlineList가 자동으로 업데이트됨.
+    // 하지만, 안전을 위해 캘린더 마킹도 다시 계산되도록 상태 업데이트를 유도할 수 있음.
+    // 여기서는 onSnapshot이 처리할 것이므로 별도 fetch는 생략합니다.
+  };
 
   return (
+    <>
     <ScrollView style={styles.container}>
       <Text style={styles.title}>스터디 캘린더</Text>
       <Calendar
         style={styles.calendar}
         current={currentMonthDate.toISOString().split('T')[0]}
-        onDayPress={(day: DateData) => setSelectedDate(day.dateString)}
+
+        onDayPress={(day: DateData) => {
+           setSelectedDate(day.dateString);
+           setDeadlineModalVisible(true);  //마감일 추가
+        }}
+
         onMonthChange={onMonthChange}
         markingType={'custom'}
         markedDates={markedDates}
@@ -423,9 +568,25 @@ const StudyCalendar: React.FC = () => {
       />
         <View style={styles.assignmentsContainer}>
             <Text style={styles.assignmentsTitle}>{selectedDate} 일정</Text>
-            {/* 개인 일정만 보여주던 것을 합쳐진 일정 목록으로 변경 */}
-            {selectedDateSchedules.length > 0 ? (
-                selectedDateSchedules.map(item => (
+            {/* 개인 일정/그룹 일정/마감일을 포함하는 목록 */}
+            {selectedDateSchedules.length > 0 || deadlineList.filter(item => item.date === selectedDate).length > 0 ? (
+                <>
+                {/* 마감일 목록 표시 (선택된 날짜에 해당하는 항목만) */}
+                {deadlineList
+                  .filter(item => item.date === selectedDate)
+                  .map((item, index) => (
+                    <TouchableOpacity
+                      key={`deadline-${item.id || index}`}
+                      onPress={() => handleDeleteDeadline(item.id, item.title)}
+                      style={[styles.assignmentItem, { backgroundColor: '#fff3e0', borderWidth: 1, borderColor: '#ffb74d' }]} // 마감일 스타일 강조
+                    >
+                      <Text style={[styles.assignmentTitle, { color: '#AD5A00' }]}>🚨 마감일: {item.title}</Text>
+                      <Text style={styles.assignmentDesc}>시간: {item.time}</Text>
+                    </TouchableOpacity>
+                  ))}
+                
+                {/* 일반 개인/그룹 일정 목록 표시 */}
+                {selectedDateSchedules.map(item => (
                     <View key={item.id} style={styles.assignmentItem}>
                         <Text style={styles.assignmentTitle}>{item.title}</Text>
                         {/* 그룹 일정인 경우 출처 표시 */}
@@ -434,7 +595,8 @@ const StudyCalendar: React.FC = () => {
                         )}
                         <Text style={styles.assignmentDesc}>{item.description}</Text>
                     </View>
-                ))
+                ))}
+                </>
             ) : (
                 <Text style={styles.noAssignmentText}>등록된 일정이 없습니다.</Text>
             )}
@@ -452,14 +614,7 @@ const StudyCalendar: React.FC = () => {
           <Text style={styles.infoTitle}>과목별 공부 비중 (주간)</Text>
           {chartData ? (
             <View style={styles.chartContainer}>
-              <PieChart
-                widthAndHeight={120}
-                series={chartData.series} // series 객체 배열을 그대로 전달
-                //sliceColor={chartData.series.map(item => item.color)} // sliceColor는 여전히 필요할 수 있음
-                doughnut={true}
-                coverRadius={0.6}
-                coverFill={'#FFF'}
-              />
+              <TaskStatsPie chartData={chartData.series} />
               <View style={styles.legendContainer}>
                 {chartData.series.map(item => (
                   <View key={item.legend} style={styles.legendItem}>
@@ -471,6 +626,46 @@ const StudyCalendar: React.FC = () => {
             </View>
           ) : (
             <Text style={styles.noDataText}>이번 주 공부 기록이 없습니다.</Text>
+          )}
+        </View>
+        {/* 마감일 보기 */}
+        <View style={styles.infoBox}>
+          <Text style={styles.infoTitle}> 나의 마감일 목록</Text>
+          {/*  삭제 기능 안내 문구 추가 */}
+          <Text style={{ fontSize: 12, color: '#999', marginBottom: 10 }}>
+            (항목을 누르면 삭제할 수 있습니다)
+          </Text>
+
+          {deadlineList.length > 0 ? (
+            deadlineList.map((item, index) => (
+              <TouchableOpacity
+                key={item.id || index}
+                onPress={() => handleDeleteDeadline(item.id, item.title)}
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  paddingVertical: 12,
+                  borderBottomWidth: 1,
+                  borderBottomColor: '#eee'
+                }}
+              >
+                <View>
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>
+                    {item.title}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                    {item.date} 마감
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 16, color: '#FF8F00', fontWeight: 'bold' }}>
+                  {item.time}
+                </Text>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <Text style={{ textAlign: 'center', color: '#aaa', paddingVertical: 20 }}>
+              등록된 마감일이 없습니다.
+            </Text>
           )}
         </View>
       </View>
@@ -505,6 +700,66 @@ const StudyCalendar: React.FC = () => {
       </Modal>
 
     </ScrollView>
+    {deadlineModalVisible && (
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          
+          <Text style={styles.modalTitle}>마감일 추가</Text>
+          <Text style={{textAlign: 'center', marginBottom: 15, color: '#666'}}>{selectedDate}</Text>
+
+          
+          <ScrollView style={{ maxHeight: 100, marginBottom: 10 }}>
+            {deadlineList
+              .filter(item => item.date === selectedDate) // 이 날짜거만 골라내기
+              .map((item, index) => (
+                <View key={index} style={styles.existingItem}>
+                  <Text style={styles.existingItemText}> {item.title}</Text>
+                  <Text style={styles.existingItemTime}>{item.time}</Text>
+                </View>
+            ))}
+          </ScrollView>
+
+          <TextInput
+            placeholder="할 일 입력"
+            placeholderTextColor="#888"
+            style={styles.input}
+            value={deadlineTitle}
+            onChangeText={setDeadlineTitle}
+          />
+
+          <TextInput
+            placeholder="시간 (예: 18:00)"
+            placeholderTextColor="#888"
+            style={styles.input}
+            value={deadlineTime}
+            onChangeText={setDeadlineTime}
+          />
+
+          <View style={styles.buttonContainer}>
+            <View style={styles.buttonWrapper}>
+              <Button
+                title="저장"
+                onPress={async () => {
+                  await addDeadline(selectedDate, deadlineTitle, deadlineTime);
+                  setDeadlineModalVisible(false); 
+                  setDeadlineTitle("");
+                  setDeadlineTime("18:00");
+                }}
+              />
+            </View>
+            <View style={styles.buttonWrapper}>
+              <Button 
+                title="닫기" 
+                color="red" 
+                onPress={() => setDeadlineModalVisible(false)} 
+              />
+            </View>
+          </View>
+
+        </View>
+      </View>
+    )}
+    </>
   );
 };
 
@@ -522,6 +777,75 @@ const styles = StyleSheet.create({
     legendColor: { width: 14, height: 14, borderRadius: 7, marginRight: 8 },
     legendText: { fontSize: 14, flexShrink: 1 },
     noDataText: { textAlign: 'center', color: '#888', marginTop: 20 },
+    //마감일관련 추가
+    modalOverlay: {
+    position: 'absolute', 
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)', 
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000, //
+  },
+  modalContent: {
+    width: '85%',
+    backgroundColor: 'white',
+    padding: 25,
+    borderRadius: 15, 
+    elevation: 10,
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+    color: '#333',
+  },
+  input: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 15,
+    fontSize: 16,
+    backgroundColor: '#f9f9f9', 
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between', 
+    marginTop: 10,
+  },
+  buttonWrapper: {
+    width: '48%',
+  },
+  existingItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#fff3e0',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  existingItemText: {
+    fontSize: 16,
+    color: '#333',
+    fontWeight: '500',
+    flex: 1,
+  },
+  existingItemTime: {
+    fontSize: 14,
+    color: '#FF8F00',
+    fontWeight: 'bold',
+    marginLeft: 10,
+  },
     assignmentsContainer: {
             marginHorizontal: 10,
             marginTop: 20,
@@ -578,27 +902,6 @@ const styles = StyleSheet.create({
             justifyContent: 'center',
             alignItems: 'center',
             backgroundColor: 'rgba(0,0,0,0.5)',
-        },
-        modalContent: {
-            width: '90%',
-            backgroundColor: 'white',
-            borderRadius: 10,
-            padding: 20,
-            elevation: 10,
-        },
-        modalTitle: {
-            fontSize: 20,
-            fontWeight: 'bold',
-            marginBottom: 20,
-            textAlign: 'center',
-        },
-        input: {
-            borderWidth: 1,
-            borderColor: '#ddd',
-            borderRadius: 5,
-            padding: 10,
-            marginBottom: 15,
-            fontSize: 16,
         },
         multilineInput: {
             height: 100,

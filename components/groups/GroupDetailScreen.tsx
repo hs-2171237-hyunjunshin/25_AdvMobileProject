@@ -667,7 +667,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#C7C7CD',
   },
-  // [추가] 캘린더 모달 관련 스타일
+  // 캘린더 모달 관련 스타일
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',

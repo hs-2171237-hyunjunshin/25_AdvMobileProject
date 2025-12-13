@@ -116,7 +116,7 @@ const StudyCalendar: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
   //개인 일정 및 과제 
-  const [assignmentsByDate, setAssignmentsByDate] = useState<AssignmentsByDate>({});
+  const [assignmentsByDate, setAssignmentsByDate] = useState<SchedulesByDate>({});
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newAssignment, setNewAssignment] = useState({ title: '', description: '' });
 
@@ -299,7 +299,7 @@ const StudyCalendar: React.FC = () => {
 
           const newAssignments: SchedulesByDate = {};
           querySnapshot.forEach(doc => {
-              const data = doc.data() as Omit<Assignment, 'id'>;
+              const data = doc.data() as Omit<ScheduleItem, 'id'>;
               const assignment: ScheduleItem = { ...data, id: doc.id };
               if (!newAssignments[assignment.dueDate]) {
                   newAssignments[assignment.dueDate] = [];
@@ -406,16 +406,7 @@ const StudyCalendar: React.FC = () => {
             };
         }
 
-      const allSchedules: AssignmentsByDate = { ...assignmentsByDate };
-      Object.keys(groupSchedules).forEach(date => {
-          if (allSchedules[date]) {
-              // 해당 날짜에 이미 개인 일정이 있으면 그룹 일정을 뒤에 추가
-              allSchedules[date] = [...allSchedules[date], ...groupSchedules[date]];
-          } else {
-              // 해당 날짜에 개인 일정이 없으면 그룹 일정으로 새로 할당
-              allSchedules[date] = groupSchedules[date];
-          }
-      });
+
     
       for (const item of deadlineList) {
           const date = item.date;
@@ -538,34 +529,31 @@ const StudyCalendar: React.FC = () => {
       }
   };
     // addDeadline 호출 후 마감일 목록 새로고침
-  const handleSaveDeadline = async () => {
-    await addDeadline(selectedDate, deadlineTitle, deadlineTime);
-    setDeadlineModalVisible(false);
-    setDeadlineTitle("");
-    setDeadlineTime("18:00");
-    // 마감일이 firestore에 추가되면 useEffect에 의해 deadlineList가 자동으로 업데이트됨.
-    // 하지만, 안전을 위해 캘린더 마킹도 다시 계산되도록 상태 업데이트를 유도할 수 있음.
-    // 여기서는 onSnapshot이 처리할 것이므로 별도 fetch는 생략합니다.
-  };
+  const handleAddButtonPress = () => {
+      Alert.alert(
+        `${selectedDate} 일정 추가`,
+        "어떤 종류의 일정을 추가하시겠습니까?",
+        [
+          { text: "개인 일정", onPress: () => setIsModalVisible(true) },
+          { text: "마감일", onPress: () => setDeadlineModalVisible(true) },
+          { text: "취소", style: "cancel" },
+        ]
+      );
+    };
 
   return (
     <>
     <ScrollView style={styles.container}>
-      <Text style={styles.title}>스터디 캘린더</Text>
-      <Calendar
-        style={styles.calendar}
-        current={currentMonthDate.toISOString().split('T')[0]}
-
-        onDayPress={(day: DateData) => {
-           setSelectedDate(day.dateString);
-           setDeadlineModalVisible(true);  //마감일 추가
-        }}
-
-        onMonthChange={onMonthChange}
-        markingType={'custom'}
-        markedDates={markedDates}
-        theme={{ calendarBackground: '#ffffff' }}
-      />
+            <Text style={styles.title}>스터디 캘린더</Text>
+            <Calendar
+              style={styles.calendar}
+              current={currentMonthDate.toISOString().split('T')[0]}
+              onDayPress={(day: DateData) => setSelectedDate(day.dateString)} // [수정] 날짜 클릭 시 마감일 모달이 뜨지 않도록 함
+              onMonthChange={onMonthChange}
+              markingType={'custom'}
+              markedDates={markedDates}
+              theme={{ calendarBackground: '#ffffff' }}
+        />
         <View style={styles.assignmentsContainer}>
             <Text style={styles.assignmentsTitle}>{selectedDate} 일정</Text>
             {/* 개인 일정/그룹 일정/마감일을 포함하는 목록 */}
@@ -584,7 +572,7 @@ const StudyCalendar: React.FC = () => {
                       <Text style={styles.assignmentDesc}>시간: {item.time}</Text>
                     </TouchableOpacity>
                   ))}
-                
+
                 {/* 일반 개인/그룹 일정 목록 표시 */}
                 {selectedDateSchedules.map(item => (
                     <View key={item.id} style={styles.assignmentItem}>
@@ -600,8 +588,8 @@ const StudyCalendar: React.FC = () => {
             ) : (
                 <Text style={styles.noAssignmentText}>등록된 일정이 없습니다.</Text>
             )}
-            <TouchableOpacity style={styles.addButton} onPress={() => setIsModalVisible(true)}>
-                <Text style={styles.addButtonText}>+ 새 일정 등록</Text>
+            <TouchableOpacity style={styles.addButton} onPress={handleAddButtonPress}>
+                        <Text style={styles.addButtonText}>+ 새 일정 등록 / 마감일 추가</Text>
             </TouchableOpacity>
         </View>
 
@@ -637,9 +625,9 @@ const StudyCalendar: React.FC = () => {
           </Text>
 
           {deadlineList.length > 0 ? (
-            deadlineList.map((item, index) => (
+            deadlineList.map((item) => (
               <TouchableOpacity
-                key={item.id || index}
+                key={item.id}
                 onPress={() => handleDeleteDeadline(item.id, item.title)}
                 style={{
                   flexDirection: 'row',
@@ -703,11 +691,11 @@ const StudyCalendar: React.FC = () => {
     {deadlineModalVisible && (
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
-          
+
           <Text style={styles.modalTitle}>마감일 추가</Text>
           <Text style={{textAlign: 'center', marginBottom: 15, color: '#666'}}>{selectedDate}</Text>
 
-          
+
           <ScrollView style={{ maxHeight: 100, marginBottom: 10 }}>
             {deadlineList
               .filter(item => item.date === selectedDate) // 이 날짜거만 골라내기
@@ -741,17 +729,17 @@ const StudyCalendar: React.FC = () => {
                 title="저장"
                 onPress={async () => {
                   await addDeadline(selectedDate, deadlineTitle, deadlineTime);
-                  setDeadlineModalVisible(false); 
+                  setDeadlineModalVisible(false);
                   setDeadlineTitle("");
                   setDeadlineTime("18:00");
                 }}
               />
             </View>
             <View style={styles.buttonWrapper}>
-              <Button 
-                title="닫기" 
-                color="red" 
-                onPress={() => setDeadlineModalVisible(false)} 
+              <Button
+                title="닫기"
+                color="red"
+                onPress={() => setDeadlineModalVisible(false)}
               />
             </View>
           </View>

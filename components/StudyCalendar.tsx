@@ -7,6 +7,7 @@ import auth from '@react-native-firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import PieChart from 'react-native-pie-chart';
 
+
 // 한글 설정
 LocaleConfig.locales['ko'] = {
   monthNames: ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'],
@@ -35,6 +36,14 @@ interface AssignmentsByDate {
   [date: string]: Assignment[];
 }
 
+const getStartOfMonth = (date: Date): Date => {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+};
+
+const getEndOfMonth = (date: Date): Date => {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+};
+
 
 const StudyCalendar: React.FC = () => {
   const [sessionsByDate, setSessionsByDate] = useState<SessionsByDate>({});
@@ -48,6 +57,9 @@ const StudyCalendar: React.FC = () => {
   useEffect(() => {
     monthRef.current = currentMonthDate;
   }, [currentMonthDate]);
+
+
+  const [groupSchedules, setGroupSchedules] = useState<AssignmentsByDate>({});
 
   const fetchStudySessions = useCallback(async (dateToFetch: Date) => {
     console.log(`[Calendar] 데이터 요청: ${dateToFetch.getFullYear()}년 ${dateToFetch.getMonth() + 1}월`);
@@ -103,6 +115,77 @@ const StudyCalendar: React.FC = () => {
     }
   }, []);
 
+    const fetchGroupSchedules = useCallback(async (dateToFetch: Date) => {
+        const currentUser = auth().currentUser;
+        if (!currentUser) return;
+
+        try {
+          const userDoc = await firestore().collection('users').doc(currentUser.uid).get();
+          const joinedGroups = userDoc.data()?.joinedGroups || [];
+
+          if (joinedGroups.length === 0) {
+            setGroupSchedules({}); // 가입한 그룹이 없으면 비움
+            return;
+          }
+
+          const startOfMonth = new Date(dateToFetch.getFullYear(), dateToFetch.getMonth(), 1).toISOString().split('T')[0];
+          const endOfMonth = new Date(dateToFetch.getFullYear(), dateToFetch.getMonth() + 1, 0).toISOString().split('T')[0];
+
+          // 각 그룹의 정보를 미리 가져옴
+          const groupPromises = joinedGroups.map((groupId: string) =>
+            firestore().collection('studyGroups').doc(groupId).get()
+          );
+          const groupDocs = await Promise.all(groupPromises);
+          const groupNameMap: { [id: string]: string } = {};
+          groupDocs.forEach(doc => {
+            if (doc.exists) {
+              groupNameMap[doc.id] = doc.data()?.name || '알 수 없는 그룹';
+            }
+          });
+
+          // 각 그룹의 일정을 가져옴
+          const schedulePromises = joinedGroups.map((groupId: string) =>
+            firestore()
+              .collection('studyGroups').doc(groupId)
+              .collection('schedules')
+              .where('date', '>=', startOfMonth)
+              .where('date', '<=', endOfMonth)
+              .get()
+          );
+          const scheduleSnapshots = await Promise.all(schedulePromises);
+
+          const newSchedulesByDate: AssignmentsByDate = {};
+
+          scheduleSnapshots.forEach((snapshot, index) => {
+            const groupId = joinedGroups[index];
+            snapshot.forEach(doc => {
+              const data = doc.data();
+
+              //그룹 일정 객체를 생성할 때, isGroupSchedule과 groupName을 추가합니다.
+              const schedule: Assignment = {
+                id: `${groupId}_${doc.id}`, // ID가 겹치지 않도록 그룹ID와 문서ID를 조합
+                title: data.title,
+                dueDate: data.date, // 필드 이름을 개인 일정과 맞춤
+                // 그룹 일정임을 명시
+                isGroupSchedule: true,
+                // 그룹 이름을 포함
+                groupName: groupNameMap[groupId],
+                description: data.description || `작성자: ${data.authorName}`,
+              };
+
+              if (!newSchedulesByDate[schedule.dueDate]) {
+                newSchedulesByDate[schedule.dueDate] = [];
+              }
+              newSchedulesByDate[schedule.dueDate].push(schedule);
+            });
+          });
+
+          setGroupSchedules(newSchedulesByDate);
+        } catch (error) {
+          console.error('[Calendar] 그룹 일정 로딩 실패:', error);
+        }
+      }, []);
+
   const fetchAssignments = useCallback(async (dateToFetch: Date) => {
       const currentUser = auth().currentUser;
       if (!currentUser) return;
@@ -137,13 +220,16 @@ const StudyCalendar: React.FC = () => {
   useFocusEffect(useCallback(() => {
       fetchStudySessions(monthRef.current);
       fetchAssignments(monthRef.current);
-  }, [fetchStudySessions, fetchAssignments]));
+      fetchGroupSchedules(monthRef.current);
+  }, [fetchStudySessions, fetchAssignments, fetchGroupSchedules]));
 
   const onMonthChange = (date: DateData) => {
       const newMonthDate = new Date(date.timestamp);
+      monthRef.current = newMonthDate;
       setCurrentMonthDate(newMonthDate);
       fetchStudySessions(newMonthDate);
-      fetchAssignments(newMonthDate); // 함수 추가
+      fetchAssignments(newMonthDate);
+      fetchGroupSchedules(newMonthDate);
   };
 
   const markedDates = useMemo(() => {
@@ -161,6 +247,11 @@ const StudyCalendar: React.FC = () => {
             },
           };
         }
+
+
+
+
+
 
         // 2. 과제/시험 일정에 대한 점 마킹
         for (const date in assignmentsByDate) {
@@ -185,6 +276,40 @@ const StudyCalendar: React.FC = () => {
             };
         }
 
+      const allSchedules: AssignmentsByDate = { ...assignmentsByDate };
+      Object.keys(groupSchedules).forEach(date => {
+          if (allSchedules[date]) {
+              // 해당 날짜에 이미 개인 일정이 있으면 그룹 일정을 뒤에 추가
+              allSchedules[date] = [...allSchedules[date], ...groupSchedules[date]];
+          } else {
+              // 해당 날짜에 개인 일정이 없으면 그룹 일정으로 새로 할당
+              allSchedules[date] = groupSchedules[date];
+          }
+      });
+
+      for (const date in allSchedules) {
+          if (!marked[date]) {
+              marked[date] = {}; // 기존 마킹이 없으면 새로 생성
+          }
+          if (!marked[date].customStyles) {
+              // 공부 기록 마킹이 없는 날을 위해 customStyles 기본값 생성
+              marked[date].customStyles = {
+                  container: {},
+                  text: {},
+              };
+          }
+
+          // 점(dot)을 표시하도록 설정
+          marked[date].marked = true;
+          marked[date].customStyles.dot = {
+              backgroundColor: '#B71C1C', // 점 색상
+              width: 8,
+              height: 8,
+              borderRadius: 4,
+              marginTop: 1,
+          };
+      }
+
         // 3. 선택된 날짜 스타일링 (안정성 강화)
         if (marked[selectedDate]) {
             if (!marked[selectedDate].customStyles) {
@@ -205,8 +330,17 @@ const StudyCalendar: React.FC = () => {
             }
           };
         }
+
+
         return marked;
-      }, [sessionsByDate, assignmentsByDate, selectedDate]);
+      }, [sessionsByDate, assignmentsByDate,groupSchedules, selectedDate]);
+
+  const selectedDateSchedules = useMemo(() => {
+      const personal = assignmentsByDate[selectedDate] || [];
+      const group = groupSchedules[selectedDate] || [];
+      // 개인 일정을 앞에, 그룹 일정을 뒤에 배치하여 합침
+      return [...personal, ...group];
+    }, [selectedDate, assignmentsByDate, groupSchedules]);
 
   const weeklyData = useMemo(() => {
     const startOfWeek = new Date(selectedDate);
@@ -287,22 +421,27 @@ const StudyCalendar: React.FC = () => {
         markedDates={markedDates}
         theme={{ calendarBackground: '#ffffff' }}
       />
-      <View style={styles.assignmentsContainer}>
-                  <Text style={styles.assignmentsTitle}>{selectedDate} 일정</Text>
-                  {assignmentsByDate[selectedDate]?.length > 0 ? (
-                      assignmentsByDate[selectedDate].map(item => (
-                          <View key={item.id} style={styles.assignmentItem}>
-                              <Text style={styles.assignmentTitle}>{item.title}</Text>
-                              <Text style={styles.assignmentDesc}>{item.description}</Text>
-                          </View>
-                      ))
-                  ) : (
-                      <Text style={styles.noAssignmentText}>등록된 일정이 없습니다.</Text>
-                  )}
-                  <TouchableOpacity style={styles.addButton} onPress={() => setIsModalVisible(true)}>
-                      <Text style={styles.addButtonText}>+ 새 일정 등록</Text>
-                  </TouchableOpacity>
-      </View>
+        <View style={styles.assignmentsContainer}>
+            <Text style={styles.assignmentsTitle}>{selectedDate} 일정</Text>
+            {/* 개인 일정만 보여주던 것을 합쳐진 일정 목록으로 변경 */}
+            {selectedDateSchedules.length > 0 ? (
+                selectedDateSchedules.map(item => (
+                    <View key={item.id} style={styles.assignmentItem}>
+                        <Text style={styles.assignmentTitle}>{item.title}</Text>
+                        {/* 그룹 일정인 경우 출처 표시 */}
+                        {item.isGroupSchedule && (
+                            <Text style={styles.groupScheduleLabel}> (그룹: {item.groupName})</Text>
+                        )}
+                        <Text style={styles.assignmentDesc}>{item.description}</Text>
+                    </View>
+                ))
+            ) : (
+                <Text style={styles.noAssignmentText}>등록된 일정이 없습니다.</Text>
+            )}
+            <TouchableOpacity style={styles.addButton} onPress={() => setIsModalVisible(true)}>
+                <Text style={styles.addButtonText}>+ 새 일정 등록</Text>
+            </TouchableOpacity>
+        </View>
 
       <View style={styles.infoContainer}>
         <View style={styles.infoBox}>
@@ -316,7 +455,8 @@ const StudyCalendar: React.FC = () => {
               <PieChart
                 widthAndHeight={120}
                 series={chartData.series} // series 객체 배열을 그대로 전달
-                sliceColor={chartData.series.map(item => item.color)} // sliceColor는 여전히 필요할 수 있음
+                //sliceColor={chartData.series.map(item => item.color)} // sliceColor는 여전히 필요할 수 있음
+                doughnut={true}
                 coverRadius={0.6}
                 coverFill={'#FFF'}
               />
@@ -397,6 +537,11 @@ const styles = StyleSheet.create({
             borderBottomWidth: 1,
             borderBottomColor: '#eee',
             paddingBottom: 10,
+        },
+        groupScheduleLabel: {
+            fontSize: 14,
+            fontWeight: 'normal',
+            color: '#0D47A1', // 파란색 계열로 구분
         },
         assignmentItem: {
             paddingVertical: 8,

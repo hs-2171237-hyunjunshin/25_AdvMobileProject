@@ -15,6 +15,7 @@ import firestore from '@react-native-firebase/firestore';
 import auth from '@react-native-firebase/auth';
 import Svg, { Circle } from 'react-native-svg';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import BackgroundTimer from 'react-native-background-timer';
 
 // --- 타입 정의 ---
 type TimerType = 'stopwatch' | 'pomodoro';
@@ -31,7 +32,7 @@ const StudyTimer: React.FC = () => {
   // --- 상태 관리 ---
   const [timerType, setTimerType] = useState<TimerType>('stopwatch');
   const [isActive, setIsActive] = useState(false);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  let intervalId: number | null = null;
 
   // 모달 상태
   const [subjectModalVisible, setSubjectModalVisible] = useState(false);
@@ -80,7 +81,7 @@ const StudyTimer: React.FC = () => {
                 setPomodoroTimeLeft(userSettings.focus * 60);
               }
             } else {
-              // [핵심 수정] 사용자는 있지만 users 문서가 없는 경우, 문서를 생성해준다.
+              //사용자는 있지만 users 문서가 없는 경우, 문서를 생성해준다.
               console.log('[StudyTimer] 신규 사용자를 위한 문서를 생성합니다.');
               const defaultSubjects = ['기본'];
               const defaultSettings = { focus: 25, shortBreak: 5, longBreak: 15 };
@@ -110,8 +111,10 @@ const StudyTimer: React.FC = () => {
 
   // --- 타이머 로직 (Core) ---
   useEffect(() => {
+
+
     if (isActive) {
-      intervalRef.current = setInterval(() => {
+      intervalId = BackgroundTimer.setInterval(() => {
         if (timerType === 'stopwatch') {
           setStopwatchTime(prev => prev + 1);
         } else {
@@ -122,20 +125,64 @@ const StudyTimer: React.FC = () => {
           });
         }
       }, 1000);
-    } else if (intervalRef.current) {
-      clearInterval(intervalRef.current);
+    } else if (intervalId) {
+      BackgroundTimer.clearInterval(intervalId);
     }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    return () => { if (intervalId) BackgroundTimer.clearInterval(intervalId); };
   }, [isActive, timerType, settings]); // settings 추가
 
   // --- 기능 함수들 ---
   const changeTimerType = (type: TimerType) => {
+
+    if (type === timerType) return;
     if (isActive) {
       Alert.alert('알림', '타이머가 실행 중일 때는 모드를 변경할 수 없습니다.');
       return;
     }
-    setTimerType(type);
-    resetTimers();
+    const hasProgress = stopwatchTime > 0 || pomodoroTimeLeft < settings.focus * 60;
+    if (hasProgress) {
+          Alert.alert(
+            "모드 변경",
+            "진행 중인 시간이 있습니다. 시간을 저장하고 모드를 변경하시겠습니까?",
+            [
+              {
+                text: "취소",
+                style: "cancel"
+              },
+              {
+                text: "저장 후 변경",
+                onPress: () => {
+                  // 현재 타입에 따라 저장 로직 호출
+                  if (timerType === 'stopwatch') {
+                    handleStopwatchStop(); // 스톱워치 저장 및 초기화
+                  } else {
+                    const elapsedTime = settings.focus * 60 - pomodoroTimeLeft;
+                    if (elapsedTime >= 60) {
+                      saveStudySession(elapsedTime);
+                      Alert.alert('기록 완료', `${formatTime(elapsedTime)}의 학습 시간이 저장되었습니다.`);
+                    }
+                    resetTimers(); // 뽀모도로 초기화
+                  }
+                  // 새로운 타이머 타입으로 변경
+                  setTimerType(type);
+                }
+              },
+              {
+                text: "저장 안함",
+                onPress: () => {
+                  // 그냥 초기화하고 타입만 변경
+                  resetTimers();
+                  setTimerType(type);
+                },
+                style: "destructive" // '삭제'와 비슷한 느낌을 줌
+              }
+            ]
+          );
+        } else {
+          // 진행된 시간이 없으면 그냥 타입 변경
+          setTimerType(type);
+          resetTimers(); // 모드에 맞춰 타이머 기본값 리셋
+        }
   };
 
   const resetTimers = () => {

@@ -35,3 +35,17 @@ export const getDeadlinesByMonth = async (year: number, month: number) => {
     ...doc.data(),
   }));
 };
+//알림삭제 추가
+export const deleteDeadline = async (id: string) => {
+  // 문서 ID(id)를 받아서 해당 문서를 삭제
+  return firestore()
+    .collection('deadlines')
+    .doc(id)
+    .delete();
+};
+export const deleteNotification = async (id: string) => {
+  return firestore()
+    .collection('notifications') 
+    .doc(id)
+    .delete();
+};

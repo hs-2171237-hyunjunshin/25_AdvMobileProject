@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Alert, ScrollView, TextInput, Button } from 'react-native';
+
+import { View, Text, StyleSheet, Alert, ScrollView, TextInput, Button, TouchableOpacity } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import type { DateData } from 'react-native-calendars/src/types';
 import firestore from '@react-native-firebase/firestore';
@@ -197,6 +198,29 @@ const StudyCalendar: React.FC = () => {
     setCurrentMonthDate(newMonthDate);
     fetchStudySessions(newMonthDate);
   };
+  //마감일삭제
+  const handleDeleteDeadline = (id: string, title: string) => {
+    Alert.alert(
+      "마감일 삭제",
+      `'${title}' 항목을 삭제하시겠습니까?`,
+      [
+        { text: "취소", style: "cancel" },
+        { 
+          text: "삭제", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await firestore().collection('deadlines').doc(id).delete();
+              Alert.alert("삭제 완료", "마감일이 삭제되었습니다.");
+            } catch (error) {
+              console.error("삭제 실패:", error);
+              Alert.alert("오류", "삭제 중 문제가 발생했습니다.");
+            }
+          }
+        }
+      ]
+    );
+  };
 
   const markedDates = useMemo(() => {
     const marked: { [key: string]: any } = {};
@@ -312,16 +336,24 @@ const StudyCalendar: React.FC = () => {
         {/* 마감일 보기 */}
         <View style={styles.infoBox}>
           <Text style={styles.infoTitle}> 나의 마감일 목록</Text>
-          
+          {/*  삭제 기능 안내 문구 추가 */}
+          <Text style={{ fontSize: 12, color: '#999', marginBottom: 10 }}>
+            (항목을 누르면 삭제할 수 있습니다)
+          </Text>
+
           {deadlineList.length > 0 ? (
             deadlineList.map((item, index) => (
-              <View key={index} style={{ 
-                flexDirection: 'row', 
-                justifyContent: 'space-between', 
-                paddingVertical: 12, 
-                borderBottomWidth: 1, 
-                borderBottomColor: '#eee' 
-              }}>
+              <TouchableOpacity
+                key={item.id || index}
+                onPress={() => handleDeleteDeadline(item.id, item.title)}
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  paddingVertical: 12,
+                  borderBottomWidth: 1,
+                  borderBottomColor: '#eee'
+                }}
+              >
                 <View>
                   <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>
                     {item.title}
@@ -333,7 +365,7 @@ const StudyCalendar: React.FC = () => {
                 <Text style={{ fontSize: 16, color: '#FF8F00', fontWeight: 'bold' }}>
                   {item.time}
                 </Text>
-              </View>
+              </TouchableOpacity>
             ))
           ) : (
             <Text style={{ textAlign: 'center', color: '#aaa', paddingVertical: 20 }}>

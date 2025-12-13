@@ -5,7 +5,8 @@ import type { DateData } from 'react-native-calendars/src/types';
 import firestore from '@react-native-firebase/firestore';
 import auth from '@react-native-firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
-import PieChart from 'react-native-pie-chart';
+import TaskStatsPie from './notification/TaskStatsPie';
+import notifee, { TriggerType, AndroidImportance } from '@notifee/react-native';
 
 // 한글 설정
 LocaleConfig.locales['ko'] = {
@@ -24,31 +25,75 @@ interface SessionsByDate {
     subjects: { [subject: string]: number };
   };
 }
-  export async function addDeadline(dateString: string, title: string, time: string) { 
+  export async function addDeadline(dateString: string, title: string, time: string) {
   try {
     const currentUser = auth().currentUser;
     if (!currentUser) {
-    Alert.alert("오류", "로그인이 필요합니다.");
-    return;
-  }
-    
-    // 이전에 정의되어 있지 않던 isCompleted 필드도 추가
-    await firestore()
-      .collection("deadlines")
-      .add({
-        userId: currentUser.uid,
-        date: dateString,
-        title: title,
-        time: time,
-        isCompleted: false, // 이 필드가 있어야 나중에 체크박스 구현 가능
-        createdAt: firestore.FieldValue.serverTimestamp(),
-      });
+      Alert.alert("오류", "로그인이 필요합니다.");
+      return;
+    }
 
-    Alert.alert("성공", "마감일이 저장되었습니다!");
+    if (!title.trim()) {
+      Alert.alert("알림", "내용을 입력해주세요.");
+      return;
+    }
+
+    //권한 및 채널 설정
+    await notifee.requestPermission();
+    const channelId = await notifee.createChannel({
+      id: 'deadline-alert',
+      name: '마감일 알림',
+      importance: AndroidImportance.HIGH,
+    });
+
+    // 날짜 계산
+    const deadlineDate = new Date(`${dateString}T${time}:00`);
+    const deadlineTime = deadlineDate.getTime();
+    
+    //예약 함수 정의
+    const scheduleAlert = async (triggerTime: number, bodyText: string) => {
+      const now = Date.now();
+      if (triggerTime > now) {
+        await notifee.createTriggerNotification(
+          {
+            title: ` 마감 임박: ${title}`,
+            body: bodyText,
+            android: { channelId, pressAction: { id: 'default' }, smallIcon: 'ic_launcher' },
+          },
+          { type: TriggerType.TIMESTAMP, timestamp: triggerTime }
+        );
+      }
+    };
+
+    // 24시간 전, 1시간 전 예약 실행
+    await scheduleAlert(deadlineTime - (24 * 60 * 60 * 1000), "마감 하루 전입니다! 준비하세요 🔥");
+    await scheduleAlert(deadlineTime - (1 * 60 * 60 * 1000), "마감 1시간 전입니다! ⏳");
+
+    // deadlines 컬렉션에 저장 (캘린더 표시용)
+    await firestore().collection("deadlines").add({
+      userId: currentUser.uid,
+      date: dateString,
+      title: title,
+      time: time,
+      isCompleted: false,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+    });
+
+    // 마감일이 생성기록
+    await firestore().collection("notifications").add({
+      userId: currentUser.uid,
+      type: "deadline_created",
+      title: "새로운 마감일 설정됨",
+      message: `'${title}' 마감일(${dateString} ${time})이 등록되었습니다.`,
+      isRead: false,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+    });
+
+    Alert.alert("성공", "마감일과 알림이 설정되었습니다!");
 
   } catch (error) {
-    console.log("마감일 저장 실패:", error);
-    Alert.alert("오류", "마감일 저장 중 문제가 발생했습니다.");
+    console.error("저장 실패:", error);
+    Alert.alert("오류", "문제가 발생했습니다.");
   }
 }
 
@@ -57,12 +102,35 @@ const StudyCalendar: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
 
-  //마감일 관련
+  //마감일 설정 관련
   const [deadlineModalVisible, setDeadlineModalVisible] = useState(false);
   const [deadlineTitle, setDeadlineTitle] = useState("");
   const [deadlineTime, setDeadlineTime] = useState("18:00");
 
+  //마감일 불러오기
+  const [deadlineList, setDeadlineList] = useState<any[]>([]);
+  useEffect(() => {
+    const currentUser = auth().currentUser;
+    if (!currentUser) return;
 
+    // 'deadlines' 컬렉션에서 내 데이터만 실시간으로 가져옴
+    const unsubscribe = firestore()
+      .collection('deadlines')
+      .where('userId', '==', currentUser.uid)
+      //.orderBy('createdAt', 'desc') // 최신순 정렬
+      .onSnapshot(snapshot => {
+        if (!snapshot) return; 
+        const list = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setDeadlineList(list);
+      }, error => {
+        console.log("데이터 불러오기 에러:", error);
+      });
+
+    return () => unsubscribe();
+  }, []);
   const monthRef = useRef(currentMonthDate);
   useEffect(() => {
     monthRef.current = currentMonthDate;
@@ -227,13 +295,7 @@ const StudyCalendar: React.FC = () => {
           <Text style={styles.infoTitle}>과목별 공부 비중 (주간)</Text>
           {chartData ? (
             <View style={styles.chartContainer}>
-              <PieChart
-                widthAndHeight={120}
-                series={chartData.series} // series 객체 배열을 그대로 전달
-                sliceColor={chartData.series.map(item => item.color)} // sliceColor는 여전히 필요할 수 있음
-                coverRadius={0.6}
-                coverFill={'#FFF'}
-              />
+              <TaskStatsPie chartData={chartData.series} />
               <View style={styles.legendContainer}>
                 {chartData.series.map(item => (
                   <View key={item.legend} style={styles.legendItem}>
@@ -247,55 +309,99 @@ const StudyCalendar: React.FC = () => {
             <Text style={styles.noDataText}>이번 주 공부 기록이 없습니다.</Text>
           )}
         </View>
+        {/* 마감일 보기 */}
+        <View style={styles.infoBox}>
+          <Text style={styles.infoTitle}> 나의 마감일 목록</Text>
+          
+          {deadlineList.length > 0 ? (
+            deadlineList.map((item, index) => (
+              <View key={index} style={{ 
+                flexDirection: 'row', 
+                justifyContent: 'space-between', 
+                paddingVertical: 12, 
+                borderBottomWidth: 1, 
+                borderBottomColor: '#eee' 
+              }}>
+                <View>
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>
+                    {item.title}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                    {item.date} 마감
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 16, color: '#FF8F00', fontWeight: 'bold' }}>
+                  {item.time}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <Text style={{ textAlign: 'center', color: '#aaa', paddingVertical: 20 }}>
+              등록된 마감일이 없습니다.
+            </Text>
+          )}
+        </View>
       </View>
     </ScrollView>
     {deadlineModalVisible && (
-  <View style={styles.modalOverlay}> {/* 1. 바깥쪽: 어두운 반투명 배경 */}
-    <View style={styles.modalContent}> {/* 2. 안쪽: 하얀색 중앙 박스 */}
-      
-      <Text style={styles.modalTitle}>마감일 추가</Text>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          
+          <Text style={styles.modalTitle}>마감일 추가</Text>
+          <Text style={{textAlign: 'center', marginBottom: 15, color: '#666'}}>{selectedDate}</Text>
 
-      <TextInput
-        placeholder="내용 입력"
-        placeholderTextColor="#888"
-        style={styles.input}
-        value={deadlineTitle}
-        onChangeText={setDeadlineTitle}
-      />
+          
+          <ScrollView style={{ maxHeight: 100, marginBottom: 10 }}>
+            {deadlineList
+              .filter(item => item.date === selectedDate) // 이 날짜거만 골라내기
+              .map((item, index) => (
+                <View key={index} style={styles.existingItem}>
+                  <Text style={styles.existingItemText}> {item.title}</Text>
+                  <Text style={styles.existingItemTime}>{item.time}</Text>
+                </View>
+            ))}
+          </ScrollView>
 
-      <TextInput
-        placeholder="시간 (예: 18:00)"
-        placeholderTextColor="#888"
-        style={styles.input}
-        value={deadlineTime}
-        onChangeText={setDeadlineTime}
-      />
-
-      {/* 버튼들을 가로로 배치하기 위한 컨테이너 */}
-      <View style={styles.buttonContainer}>
-        <View style={styles.buttonWrapper}>
-          <Button
-            title="저장"
-            onPress={async () => {
-              await addDeadline(selectedDate, deadlineTitle, deadlineTime);
-              setDeadlineModalVisible(false);
-              setDeadlineTitle("");
-              setDeadlineTime("18:00");
-            }}
+          <TextInput
+            placeholder="할 일 입력"
+            placeholderTextColor="#888"
+            style={styles.input}
+            value={deadlineTitle}
+            onChangeText={setDeadlineTitle}
           />
-        </View>
-        <View style={styles.buttonWrapper}>
-          <Button 
-            title="닫기" 
-            color="red" 
-            onPress={() => setDeadlineModalVisible(false)} 
+
+          <TextInput
+            placeholder="시간 (예: 18:00)"
+            placeholderTextColor="#888"
+            style={styles.input}
+            value={deadlineTime}
+            onChangeText={setDeadlineTime}
           />
+
+          <View style={styles.buttonContainer}>
+            <View style={styles.buttonWrapper}>
+              <Button
+                title="저장"
+                onPress={async () => {
+                  await addDeadline(selectedDate, deadlineTitle, deadlineTime);
+                  setDeadlineModalVisible(false); 
+                  setDeadlineTitle("");
+                  setDeadlineTime("18:00");
+                }}
+              />
+            </View>
+            <View style={styles.buttonWrapper}>
+              <Button 
+                title="닫기" 
+                color="red" 
+                onPress={() => setDeadlineModalVisible(false)} 
+              />
+            </View>
+          </View>
+
         </View>
       </View>
-
-    </View>
-  </View>
-)}
+    )}
     </>
   );
 };
@@ -361,6 +467,27 @@ const styles = StyleSheet.create({
   },
   buttonWrapper: {
     width: '48%',
+  },
+  existingItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#fff3e0',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  existingItemText: {
+    fontSize: 16,
+    color: '#333',
+    fontWeight: '500',
+    flex: 1,
+  },
+  existingItemTime: {
+    fontSize: 14,
+    color: '#FF8F00',
+    fontWeight: 'bold',
+    marginLeft: 10,
   },
 });
 

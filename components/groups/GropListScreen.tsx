@@ -5,24 +5,24 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native
 const dummyGroups = [
     {
         id: '1',
-        name: '2025 °ø¹«¿ø ÁØºñ¹Ý',
-        description: 'ÇÔ²² °ø¹«¿ø ½ÃÇè ÁØºñÇØ¿ä!',
+        name: '2025 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Øºï¿½ï¿½',
+        description: 'ï¿½Ô²ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Øºï¿½ï¿½Ø¿ï¿½!',
         memberCount: 24,
         postCount: 156,
         scheduleCount: 3,
     },
     {
         id: '2',
-        name: 'Ãë¾÷ ÀÚ¼Ò¼­ ½ºÅÍµð',
-        description: '¼­·Î ÇÇµå¹é ÁÖ°í¹Þ´Â ½ºÅÍµðÀÔ´Ï´Ù.',
+        name: 'ï¿½ï¿½ï¿½ ï¿½Ú¼Ò¼ï¿½ ï¿½ï¿½ï¿½Íµï¿½',
+        description: 'ï¿½ï¿½ï¿½ï¿½ ï¿½Çµï¿½ï¿½ ï¿½Ö°ï¿½Þ´ï¿½ ï¿½ï¿½ï¿½Íµï¿½ï¿½Ô´Ï´ï¿½.',
         memberCount: 8,
         postCount: 42,
         scheduleCount: 5,
     },
     {
         id: '3',
-        name: 'ÅäÀÍ 900 ¸ñÇ¥¹Ý',
-        description: '¸ÅÀÏ ´Ü¾î + LC/RC Ç®±â',
+        name: 'ï¿½ï¿½ï¿½ï¿½ 900 ï¿½ï¿½Ç¥ï¿½ï¿½',
+        description: 'ï¿½ï¿½ï¿½ï¿½ ï¿½Ü¾ï¿½ + LC/RC Ç®ï¿½ï¿½',
         memberCount: 15,
         postCount: 73,
         scheduleCount: 2,
@@ -43,16 +43,16 @@ export default function GroupListScreen({ navigation }) {
             <Text style={styles.groupName}>{item.name}</Text>
             <Text style={styles.description}>{item.description}</Text>
             <View style={styles.metaRow}>
-                <Text style={styles.metaText}>¸â¹ö {item.memberCount}¸í</Text>
-                <Text style={styles.metaText}>°Ô½Ã±Û {item.postCount}°³</Text>
-                <Text style={styles.metaText}>ÀÏÁ¤ {item.scheduleCount}°³</Text>
+                <Text style={styles.metaText}>ï¿½ï¿½ï¿½ {item.memberCount}ï¿½ï¿½</Text>
+                <Text style={styles.metaText}>ï¿½Ô½Ã±ï¿½ {item.postCount}ï¿½ï¿½</Text>
+                <Text style={styles.metaText}>ï¿½ï¿½ï¿½ï¿½ {item.scheduleCount}ï¿½ï¿½</Text>
             </View>
         </TouchableOpacity>
     );
 
     return (
         <View style={styles.container}>
-            <Text style={styles.title}>±×·ì ¸ñ·Ï</Text>
+            <Text style={styles.title}>ï¿½×·ï¿½ ï¿½ï¿½ï¿½</Text>
             <FlatList
                 data={dummyGroups}
                 keyExtractor={(item) => item.id}

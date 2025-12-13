@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Alert, ScrollView, Modal, TextInput, Button, TouchableOpacity } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import type { DateData } from 'react-native-calendars/src/types';
 import firestore from '@react-native-firebase/firestore';
@@ -24,11 +24,25 @@ interface SessionsByDate {
     subjects: { [subject: string]: number };
   };
 }
+interface Assignment {
+  id: string;
+  title: string;
+  dueDate: string;
+  description: string;
+}
+
+interface AssignmentsByDate {
+  [date: string]: Assignment[];
+}
+
 
 const StudyCalendar: React.FC = () => {
   const [sessionsByDate, setSessionsByDate] = useState<SessionsByDate>({});
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
+  const [assignmentsByDate, setAssignmentsByDate] = useState<AssignmentsByDate>({});
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [newAssignment, setNewAssignment] = useState({ title: '', description: '' });
 
   const monthRef = useRef(currentMonthDate);
   useEffect(() => {
@@ -89,40 +103,110 @@ const StudyCalendar: React.FC = () => {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { fetchStudySessions(monthRef.current); }, [fetchStudySessions]));
+  const fetchAssignments = useCallback(async (dateToFetch: Date) => {
+      const currentUser = auth().currentUser;
+      if (!currentUser) return;
+
+      const startOfMonth = new Date(dateToFetch.getFullYear(), dateToFetch.getMonth(), 1);
+      const endOfMonth = new Date(dateToFetch.getFullYear(), dateToFetch.getMonth() + 1, 0);
+
+      try {
+          const querySnapshot = await firestore()
+              .collection('assignments')
+              .where('userId', '==', currentUser.uid)
+              .where('dueDate', '>=', startOfMonth.toISOString().split('T')[0])
+              .where('dueDate', '<=', endOfMonth.toISOString().split('T')[0])
+              .get();
+
+          const newAssignments: AssignmentsByDate = {};
+          querySnapshot.forEach(doc => {
+              const data = doc.data() as Omit<Assignment, 'id'>;
+              const assignment: Assignment = { ...data, id: doc.id };
+              if (!newAssignments[assignment.dueDate]) {
+                  newAssignments[assignment.dueDate] = [];
+              }
+              newAssignments[assignment.dueDate].push(assignment);
+          });
+          setAssignmentsByDate(prev => ({ ...prev, ...newAssignments }));
+      } catch (error) {
+          console.error("[Calendar] 과제/시험 일정 로딩 실패:", error);
+          Alert.alert('오류', '일정을 불러오는 데 실패했습니다.');
+      }
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+      fetchStudySessions(monthRef.current);
+      fetchAssignments(monthRef.current);
+  }, [fetchStudySessions, fetchAssignments]));
 
   const onMonthChange = (date: DateData) => {
-    const newMonthDate = new Date(date.timestamp);
-    setCurrentMonthDate(newMonthDate);
-    fetchStudySessions(newMonthDate);
+      const newMonthDate = new Date(date.timestamp);
+      setCurrentMonthDate(newMonthDate);
+      fetchStudySessions(newMonthDate);
+      fetchAssignments(newMonthDate); // 함수 추가
   };
 
   const markedDates = useMemo(() => {
-    const marked: { [key: string]: any } = {};
-    for (const date in sessionsByDate) {
-      const dailyTotal = sessionsByDate[date].totalSeconds;
-      const hours = dailyTotal / 3600;
-      let opacity = Math.min(1, Math.max(0.2, hours / 4));
-      marked[date] = {
-        customStyles: {
-          container: { backgroundColor: `rgba(255, 143, 0, ${opacity})`, borderRadius: 8 },
-          text: { color: opacity > 0.6 ? 'white' : 'black', fontWeight: 'bold' },
-        },
-      };
-    }
-    if (marked[selectedDate]) {
-      marked[selectedDate].customStyles.container.borderColor = '#AD5A00';
-      marked[selectedDate].customStyles.container.borderWidth = 2;
-    } else {
-      marked[selectedDate] = {
-        customStyles: {
-          container: { borderColor: '#FF8F00', borderWidth: 2, borderRadius: 8 },
-          text: { color: '#FF8F00' }
+        const marked: { [key: string]: any } = {};
+
+        // 1. 공부 기록에 대한 배경색 마킹
+        for (const date in sessionsByDate) {
+          const dailyTotal = sessionsByDate[date].totalSeconds;
+          const hours = dailyTotal / 3600;
+          let opacity = Math.min(1, Math.max(0.2, hours / 4));
+          marked[date] = {
+            customStyles: {
+              container: { backgroundColor: `rgba(255, 143, 0, ${opacity})`, borderRadius: 8 },
+              text: { color: opacity > 0.6 ? 'white' : 'black', fontWeight: 'bold' },
+            },
+          };
         }
-      };
-    }
-    return marked;
-  }, [sessionsByDate, selectedDate]);
+
+        // 2. 과제/시험 일정에 대한 점 마킹
+        for (const date in assignmentsByDate) {
+            if (!marked[date]) { marked[date] = {}; }
+            if (!marked[date].customStyles) {
+                marked[date].customStyles = {
+                    container: {},
+                    text: {},
+                };
+            }
+
+            //이 날짜가 마킹 대상임을 알려줌
+            marked[date].marked = true;
+
+            // customStyles 안에 'dot' 스타일 추가
+            marked[date].customStyles.dot = {
+                backgroundColor: '#B71C1C',
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                marginTop: 1,
+            };
+        }
+
+        // 3. 선택된 날짜 스타일링 (안정성 강화)
+        if (marked[selectedDate]) {
+            if (!marked[selectedDate].customStyles) {
+                marked[selectedDate].customStyles = {
+                    container: { borderWidth: 2, borderRadius: 8 },
+                    text: {},
+                };
+            }
+            marked[selectedDate].customStyles.container.borderColor = '#AD5A00';
+            if (!marked[selectedDate].customStyles.container.borderWidth) {
+                 marked[selectedDate].customStyles.container.borderWidth = 2;
+            }
+        } else {
+          marked[selectedDate] = {
+            customStyles: {
+              container: { borderColor: '#FF8F00', borderWidth: 2, borderRadius: 8 },
+              text: { color: '#FF8F00' }
+            }
+          };
+        }
+        return marked;
+      }, [sessionsByDate, assignmentsByDate, selectedDate]);
 
   const weeklyData = useMemo(() => {
     const startOfWeek = new Date(selectedDate);
@@ -167,6 +251,30 @@ const StudyCalendar: React.FC = () => {
     return `${m}분`;
   };
 
+  const handleSaveAssignment = async () => {
+      const currentUser = auth().currentUser;
+      if (!currentUser || !newAssignment.title) {
+          Alert.alert('오류', '제목을 입력해주세요.');
+          return;
+      }
+
+      try {
+          await firestore().collection('assignments').add({
+              userId: currentUser.uid,
+              title: newAssignment.title,
+              description: newAssignment.description,
+              dueDate: selectedDate, // 현재 선택된 날짜가 마감일
+          });
+          Alert.alert('성공', '새로운 일정이 등록되었습니다.');
+          setIsModalVisible(false);
+          setNewAssignment({ title: '', description: '' });
+          fetchAssignments(new Date(selectedDate)); // 목록 새로고침
+      } catch (error) {
+          console.error("일정 저장 실패:", error);
+          Alert.alert('오류', '일정 등록에 실패했습니다.');
+      }
+  };
+
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.title}>스터디 캘린더</Text>
@@ -179,6 +287,23 @@ const StudyCalendar: React.FC = () => {
         markedDates={markedDates}
         theme={{ calendarBackground: '#ffffff' }}
       />
+      <View style={styles.assignmentsContainer}>
+                  <Text style={styles.assignmentsTitle}>{selectedDate} 일정</Text>
+                  {assignmentsByDate[selectedDate]?.length > 0 ? (
+                      assignmentsByDate[selectedDate].map(item => (
+                          <View key={item.id} style={styles.assignmentItem}>
+                              <Text style={styles.assignmentTitle}>{item.title}</Text>
+                              <Text style={styles.assignmentDesc}>{item.description}</Text>
+                          </View>
+                      ))
+                  ) : (
+                      <Text style={styles.noAssignmentText}>등록된 일정이 없습니다.</Text>
+                  )}
+                  <TouchableOpacity style={styles.addButton} onPress={() => setIsModalVisible(true)}>
+                      <Text style={styles.addButtonText}>+ 새 일정 등록</Text>
+                  </TouchableOpacity>
+      </View>
+
       <View style={styles.infoContainer}>
         <View style={styles.infoBox}>
           <Text style={styles.infoTitle}>주간 총 공부 시간</Text>
@@ -209,6 +334,36 @@ const StudyCalendar: React.FC = () => {
           )}
         </View>
       </View>
+      <Modal
+            animationType="slide"
+            transparent={true}
+            visible={isModalVisible}
+            onRequestClose={() => setIsModalVisible(false)}
+      >
+                  <View style={styles.modalContainer}>
+                      <View style={styles.modalContent}>
+                          <Text style={styles.modalTitle}>{selectedDate} 새 일정 등록</Text>
+                          <TextInput
+                              style={styles.input}
+                              placeholder="제목"
+                              value={newAssignment.title}
+                              onChangeText={text => setNewAssignment(prev => ({ ...prev, title: text }))}
+                          />
+                          <TextInput
+                              style={[styles.input, styles.multilineInput]}
+                              placeholder="설명 (선택 사항)"
+                              multiline
+                              value={newAssignment.description}
+                              onChangeText={text => setNewAssignment(prev => ({ ...prev, description: text }))}
+                          />
+                          <View style={styles.modalButtons}>
+                              <Button title="취소" onPress={() => setIsModalVisible(false)} color="#888" />
+                              <Button title="저장" onPress={handleSaveAssignment} />
+                          </View>
+                      </View>
+                  </View>
+      </Modal>
+
     </ScrollView>
   );
 };
@@ -227,6 +382,88 @@ const styles = StyleSheet.create({
     legendColor: { width: 14, height: 14, borderRadius: 7, marginRight: 8 },
     legendText: { fontSize: 14, flexShrink: 1 },
     noDataText: { textAlign: 'center', color: '#888', marginTop: 20 },
+    assignmentsContainer: {
+            marginHorizontal: 10,
+            marginTop: 20,
+            padding: 20,
+            backgroundColor: '#fff',
+            borderRadius: 8,
+            elevation: 2,
+        },
+        assignmentsTitle: {
+            fontSize: 18,
+            fontWeight: 'bold',
+            marginBottom: 10,
+            borderBottomWidth: 1,
+            borderBottomColor: '#eee',
+            paddingBottom: 10,
+        },
+        assignmentItem: {
+            paddingVertical: 8,
+        },
+        assignmentTitle: {
+            fontSize: 16,
+            fontWeight: '600',
+        },
+        assignmentDesc: {
+            fontSize: 14,
+            color: '#666',
+            marginTop: 4,
+        },
+        noAssignmentText: {
+            textAlign: 'center',
+            color: '#888',
+            marginVertical: 10,
+        },
+        addButton: {
+            backgroundColor: '#FF8F00',
+            borderRadius: 20,
+            paddingVertical: 10,
+            paddingHorizontal: 15,
+            alignSelf: 'center',
+            marginTop: 15,
+        },
+        addButtonText: {
+            color: '#fff',
+            fontWeight: 'bold',
+            fontSize: 16,
+        },
+        modalContainer: {
+            flex: 1,
+            justifyContent: 'center',
+            alignItems: 'center',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+        },
+        modalContent: {
+            width: '90%',
+            backgroundColor: 'white',
+            borderRadius: 10,
+            padding: 20,
+            elevation: 10,
+        },
+        modalTitle: {
+            fontSize: 20,
+            fontWeight: 'bold',
+            marginBottom: 20,
+            textAlign: 'center',
+        },
+        input: {
+            borderWidth: 1,
+            borderColor: '#ddd',
+            borderRadius: 5,
+            padding: 10,
+            marginBottom: 15,
+            fontSize: 16,
+        },
+        multilineInput: {
+            height: 100,
+            textAlignVertical: 'top',
+        },
+        modalButtons: {
+            flexDirection: 'row',
+            justifyContent: 'space-around',
+            marginTop: 10,
+        },
 });
 
 export default StudyCalendar;

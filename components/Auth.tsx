@@ -10,6 +10,8 @@ import {
   Platform,
   Alert,
 } from 'react-native';
+import auth from '@react-native-firebase/auth';
+import Dialog from 'react-native-dialog';
 
 // Props 타입 정의 수정: onSignUp 추가
 interface AuthProps {
@@ -22,6 +24,8 @@ const Auth: React.FC<AuthProps> = ({ onLogin, onSignUp }) => {
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState(''); // 비밀번호 확인 상태 추가
   const [isLoginMode, setIsLoginMode] = useState(true);
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
 
   // 모드 전환 함수
   const toggleMode = () => {
@@ -44,6 +48,33 @@ const Auth: React.FC<AuthProps> = ({ onLogin, onSignUp }) => {
     } else {
           onSignUp(email, password, passwordConfirm); // passwordConfirm 전달
     }
+  };
+  const showPasswordResetDialog = () => {
+      setDialogVisible(true);
+  };
+  const handleCancel = () => {
+      setDialogVisible(false);
+      setResetEmail(''); // 입력값 초기화
+  };
+
+  // 비밀번호 리셋 핸들러
+  const handleSendResetEmail = () => {
+      if (!resetEmail) {
+        Alert.alert('오류', '이메일 주소를 입력해야 합니다.');
+        return;
+      }
+      auth()
+        .sendPasswordResetEmail(resetEmail)
+        .then(() => {
+          Alert.alert('메일 발송 완료', `${resetEmail}으로 비밀번호 재설정 메일을 보냈습니다.`);
+        })
+        .catch(error => {
+
+        })
+        .finally(() => {
+          setDialogVisible(false); // 작업 완료 후 다이얼로그 닫기
+          setResetEmail('');
+        });
   };
 
   return (
@@ -108,6 +139,31 @@ const Auth: React.FC<AuthProps> = ({ onLogin, onSignUp }) => {
                 : '이미 계정이 있으신가요? 로그인'}
             </Text>
           </TouchableOpacity>
+
+          {/* --- "비밀번호 찾기" 버튼 --- */}
+          {isLoginMode && (
+                      <TouchableOpacity
+                        style={styles.toggleButton}
+                        onPress={showPasswordResetDialog}>
+                        <Text style={styles.toggleButtonText}>비밀번호 찾기</Text>
+                      </TouchableOpacity>
+          )}
+          <Dialog.Container visible={dialogVisible} onBackdropPress={handleCancel}>
+                      <Dialog.Title>비밀번호 재설정</Dialog.Title>
+                      <Dialog.Description>
+                        가입 시 사용한 이메일 주소를 입력해주세요. 해당 주소로 재설정 링크가 발송됩니다.
+                      </Dialog.Description>
+                      <Dialog.Input
+                        placeholder="이메일 주소"
+                        onChangeText={setResetEmail}
+                        value={resetEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        wrapperStyle={styles.dialogInput}
+                      />
+                      <Dialog.Button label="취소" onPress={handleCancel} color="#888" />
+                      <Dialog.Button label="보내기" onPress={handleSendResetEmail} bold />
+          </Dialog.Container>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -163,7 +219,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  // 새로 추가된 스타일
+
   toggleButton: {
       padding: 10,
       alignItems: 'center',
@@ -173,6 +229,11 @@ const styles = StyleSheet.create({
       fontSize: 15,
       fontWeight: '600',
   },
+  dialogInput: {
+        borderBottomWidth: 1,
+        borderBottomColor: '#ccc',
+        marginHorizontal: 15,
+ },
 });
 
 export default Auth;
